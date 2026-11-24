@@ -1,21 +1,31 @@
 mod app;
 mod cli;
+mod escapes;
 mod input;
 mod matcher;
 mod runner;
+mod signals;
+mod terminal;
 mod ui;
 
+use std::io::{self, Write};
 use std::time::Duration;
 
 use clap::Parser;
-use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
+use ratatui::{DefaultTerminal, Terminal};
 
 use app::{App, ExitReason};
 use cli::Cli;
 use runner::Runner;
+use signals::Signals;
+
+fn stdout() -> Box<dyn Write> {
+    Box::new(io::stdout())
+}
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -23,19 +33,28 @@ fn main() -> anyhow::Result<()> {
     let mut app = App::new(&cli, runner);
     let hostname = hostname();
 
-    let mut terminal = ratatui::try_init()
-        .map_err(|e| anyhow::anyhow!("failed to initialize terminal (is stdout a TTY?): {e}"))?;
-    let mouse = !cli.no_mouse;
-    if mouse {
-        execute!(std::io::stdout(), EnableMouseCapture)?;
-    }
-    let result = (|| -> anyhow::Result<()> {
+    // A panic anywhere restores the terminal and stops the running commands.
+    terminal::on_panic(app.runner.killer());
+    let guard = match terminal::enter(stdout, !cli.no_mouse) {
+        Ok(guard) => guard,
+        Err(e) => {
+            app.runner.kill_all();
+            anyhow::bail!("failed to initialize terminal (is stdout a TTY?): {e}");
+        }
+    };
+    // External termination signals end through the cleanup below, too.
+    let signals = Signals::catch(app.runner.killer())?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let result = (|| -> anyhow::Result<Option<i32>> {
         loop {
+            if let Some(sig) = signals.received() {
+                return Ok(Some(sig));
+            }
             while let Ok(msg) = rx.try_recv() {
                 app.on_msg(msg);
             }
             if app.exit.is_some() {
-                return Ok(());
+                return Ok(None);
             }
             if std::mem::take(&mut app.redraw) {
                 refresh_screen(&mut terminal)?;
@@ -56,12 +75,13 @@ fn main() -> anyhow::Result<()> {
             }
         }
     })();
-    if mouse {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
-    }
-    ratatui::restore();
     app.runner.kill_all();
-    result?;
+    // Restore the terminal before printing anything (or exiting with -e).
+    drop(terminal);
+    drop(guard);
+    if let Some(sig) = result? {
+        std::process::exit(signals::exit_status(sig));
+    }
 
     match app.exit {
         Some(ExitReason::Error(code)) => {

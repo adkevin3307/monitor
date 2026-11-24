@@ -1,12 +1,19 @@
 use std::time::Duration;
 
 use clap::Parser;
+use clap::builder::styling::{AnsiColor, Styles};
 
-/// A modern `watch` command: periodically run a command and view its output
-/// full-screen, with a time machine (browse past results), diff highlighting,
-/// search, scrolling and suspend.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "monitor", version, about, long_about = None)]
+#[command(
+    name = "monitor",
+    version,
+    about = "A modern watch: run a command periodically and view its output, with a time machine, diff highlighting and search.",
+    long_about = None,
+    styles = Styles::styled()
+        .header(AnsiColor::Yellow.on_default())
+        .usage(AnsiColor::Yellow.on_default())
+        .literal(AnsiColor::Green.on_default()),
+)]
 pub struct Cli {
     /// Interval between runs, e.g. `2`, `0.5`, `500ms`, `1m30s`
     #[arg(short = 'n', long, default_value = "2s", value_parser = parse_interval)]
@@ -28,11 +35,12 @@ pub struct Cli {
     #[arg(short = 't', long = "no-title")]
     pub no_title: bool,
 
-    /// Don't wrap long lines (scroll horizontally instead)
+    /// Start with line wrapping enabled
     #[arg(short = 'w', long)]
-    pub unfold: bool,
+    pub wrap: bool,
 
-    /// Don't capture the mouse (keeps the terminal's own text selection; no wheel scrolling)
+    /// Don't capture the mouse: drag uses the terminal's own selection, and the wheel
+    /// scrolls only where the terminal supports alternate scroll mode
     #[arg(long)]
     pub no_mouse: bool,
 
@@ -45,7 +53,12 @@ pub struct Cli {
     pub shell: String,
 
     /// Extra options passed to the shell before `-c`, e.g. "-i"
-    #[arg(long, allow_hyphen_values = true, default_value = "")]
+    #[arg(
+        long,
+        value_name = "OPTIONS",
+        allow_hyphen_values = true,
+        default_value = ""
+    )]
     pub shell_options: String,
 
     /// Exit when the command exits with a non-zero status
@@ -61,12 +74,12 @@ pub struct Cli {
     pub keep_unchanged: bool,
 
     /// Maximum number of results kept in the history
-    #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long, value_name = "N", default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     pub max_history: u64,
 
     /// Maximum memory used by stored results, e.g. `64M`, `1G`; oldest results are dropped first.
     /// Unchanged results share memory with the previous one.
-    #[arg(long, default_value = "128M", value_parser = parse_size)]
+    #[arg(long, value_name = "SIZE", default_value = "128M", value_parser = parse_size)]
     pub max_history_size: usize,
 
     /// Command to run
@@ -76,7 +89,9 @@ pub struct Cli {
 
 fn parse_interval(s: &str) -> Result<Duration, String> {
     let d = match s.parse::<f64>() {
-        Ok(secs) if secs.is_finite() && secs >= 0.0 => Duration::from_secs_f64(secs),
+        Ok(secs) if secs.is_finite() && secs >= 0.0 => {
+            Duration::try_from_secs_f64(secs).map_err(|_| "interval is too large".to_string())?
+        }
         Ok(_) => return Err("interval must be a non-negative number".into()),
         Err(_) => humantime::parse_duration(s).map_err(|e| e.to_string())?,
     };

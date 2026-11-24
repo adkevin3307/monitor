@@ -834,6 +834,8 @@ dependencies = [
  "libc",
  "ratatui",
  "regex",
+ "signal-hook",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

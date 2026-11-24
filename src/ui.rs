@@ -8,7 +8,8 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState,
 };
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Selection};
 use crate::cli::{format_bytes, format_interval};
@@ -153,15 +154,12 @@ fn draw_input(
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
-    let mut spans = vec![
-        Span::styled(" monitor ", Style::new().bg(ACCENT).fg(Color::Black)),
-        Span::raw(" "),
-        Span::raw(app.command.clone()),
+    let mut status = vec![
         Span::styled("  every ", Style::new().fg(DIM)),
         Span::styled(format_interval(app.interval), Style::new().fg(BLUE)),
     ];
     if app.precise {
-        spans.push(Span::styled(" (precise)", Style::new().fg(DIM)));
+        status.push(Span::styled(" (precise)", Style::new().fg(DIM)));
     }
     // The toggles that are on, like track's header (d / b / w turn them on and off).
     let flags: Vec<&str> = [(app.diff, "diff"), (app.bell, "bell"), (app.wrap, "wrap")]
@@ -169,17 +167,66 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
         .filter_map(|(on, name)| on.then_some(name))
         .collect();
     if !flags.is_empty() {
-        spans.push(Span::styled(
+        status.push(Span::styled(
             format!("  {}", flags.join(" · ")),
             Style::new().fg(DIM),
         ));
     }
     let right = format!("{hostname}  {} ", Local::now().format("%Y-%m-%d %H:%M:%S"));
-    let used: usize = spans.iter().map(|s| s.width()).sum();
-    let pad = (area.width as usize).saturating_sub(used + right.chars().count());
-    spans.push(Span::raw(" ".repeat(pad)));
-    spans.push(Span::styled(right, Style::new().fg(DIM)));
-    f.render_widget(Line::from(spans), area);
+    let line = header("monitor", &app.command, status, right, area.width);
+    f.render_widget(line, area);
+}
+
+/// The header line, the same in track, monitor and git-graph: the tool's name, then
+/// `source` (cut short with "…" when space runs out), then `status`, and `right` at the
+/// right edge when everything fits.
+fn header(
+    name: &str,
+    source: &str,
+    status: Vec<Span<'static>>,
+    right: String,
+    width: u16,
+) -> Line<'static> {
+    let width = width as usize;
+    let badge = format!(" {name} ");
+    let fixed = badge.width() + 1 + status.iter().map(Span::width).sum::<usize>();
+    let mut spans = vec![
+        Span::styled(badge, Style::new().bg(ACCENT).fg(Color::Black)),
+        Span::raw(" "),
+        Span::raw(fit(source, width.saturating_sub(fixed))),
+    ];
+    spans.extend(status);
+    let used: usize = spans.iter().map(Span::width).sum();
+    let right_width = right.width();
+    if used + 1 + right_width <= width {
+        spans.push(Span::raw(" ".repeat(width - used - right_width)));
+        spans.push(Span::styled(right, Style::new().fg(DIM)));
+    }
+    Line::from(spans)
+}
+
+/// `text` cut to at most `width` display columns, ending in "…" when it was cut. Widths
+/// are measured per grapheme cluster, the way ratatui draws them. The same in track,
+/// monitor and git-graph.
+fn fit(text: &str, width: usize) -> String {
+    let total: usize = text.graphemes(true).map(UnicodeWidthStr::width).sum();
+    if total <= width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for g in text.graphemes(true) {
+        let w = g.width();
+        if used + w + 1 > width {
+            break;
+        }
+        out.push_str(g);
+        used += w;
+    }
+    if width > 0 {
+        out.push('…');
+    }
+    out
 }
 
 fn panel<'a>(title: impl Into<Line<'a>>, focused: bool) -> Block<'a> {
@@ -306,6 +353,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    let current = app.current_match_row();
     let rows = app.cached_rows().expect("rows built above");
     let total = rows.lines.len();
     let height = inner.height as usize;
@@ -319,6 +367,15 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
             None => line.clone(),
         })
         .collect();
+    // The current search match's row, across the whole width like git-graph's
+    // selected commit; painted first, so the text (and match highlights) go on top
+    if let Some(row) = current.filter(|r| (first..end).contains(r)) {
+        let y = inner.y + (row - first) as u16;
+        f.buffer_mut().set_style(
+            Rect::new(inner.x, y, inner.width, 1),
+            Style::new().bg(SELECTED_BG),
+        );
+    }
     let hscroll = u16::try_from(app.scroll_x).unwrap_or(u16::MAX);
     f.render_widget(Paragraph::new(visible).scroll((0, hscroll)), inner);
 
@@ -443,13 +500,20 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// Footer key hints, the same in track, monitor and git-graph: movement, search,
 /// the tool's own keys, then `? help` and `q quit` last. When the line is too
-/// narrow, the tool's own keys are dropped from the end first, so help and quit
-/// always stay visible.
+/// narrow, the tool's own keys are dropped from the end first, so help and quit stay
+/// visible as long as they fit.
 fn footer_hints(keys: &[(&str, &str)], width: u16) -> Line<'static> {
     let hint_width = |(k, v): &(&str, &str)| Line::raw(*k).width() + Line::raw(*v).width() + 3;
+    // A leading space and two between hints: no trailing spaces needed
+    let needed =
+        |keys: &[(&str, &str)]| keys.iter().map(hint_width).sum::<usize>().saturating_sub(1);
     let mut keys = keys.to_vec();
-    while keys.len() > 2 && 1 + keys.iter().map(hint_width).sum::<usize>() > width as usize {
+    while keys.len() > 2 && needed(&keys) > width as usize {
         keys.remove(keys.len() - 3);
+    }
+    // Too narrow even for help and quit: quit alone, then nothing (never half a hint)
+    while !keys.is_empty() && needed(&keys) > width as usize {
+        keys.remove(0);
     }
     let mut spans = vec![Span::raw(" ")];
     for (k, v) in keys {
@@ -551,12 +615,12 @@ fn draw_help(f: &mut Frame, app: &mut App) {
         ("home/end", "line start / end (when not wrapping)"),
         ("Search", ""),
         ("/", "search (regex, smart case)"),
-        ("n / N", "next / previous match"),
+        ("n/N", "next / previous match"),
         ("esc", "hide search highlights, then back to the live view"),
         ("Time machine", ""),
         ("space", "toggle time machine"),
-        ("J / K", "older / newer result"),
-        ("< / >", "oldest / newest result"),
+        ("J/K", "older / newer result"),
+        ("</>", "oldest / newest result"),
         ("esc", "back to the live view"),
         ("Input box", ""),
         ("←/→ home/end ctrl-a/e", "move the cursor"),

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use unicode_width::UnicodeWidthChar;
 
 use crate::cli::Cli;
+use crate::escapes;
 use crate::input::{LineEditor, push_history};
 use crate::matcher::Matcher;
 use crate::runner::{Msg, Runner, Snapshot};
@@ -138,6 +140,9 @@ pub struct App {
     pub message: Option<String>,
     /// A jump to a search match, done once the rows for the frame are built.
     pending_jump: Option<Jump>,
+    /// Row of the current search match: highlighted, and where n / N continue from
+    /// while it is on screen (like git-graph's selected commit).
+    current_match: Option<usize>,
 
     pub exit: Option<ExitReason>,
     cache: Option<(RowsKey, Rows)>,
@@ -153,8 +158,29 @@ pub struct Change {
     pub lines: usize,
 }
 
-/// Compares two outputs line by line.
+/// The output as it is shown: only its color sequences (see `escapes`), and of each
+/// line only the text after its last carriage return (progress bars and spinners write
+/// over the line), the same as in track.
+pub fn clean_output(output: &str) -> Cow<'_, str> {
+    let colors = escapes::keep_colors(output);
+    if !colors.contains('\r') {
+        return colors;
+    }
+    let lines: Vec<&str> = colors.split('\n').map(after_last_cr).collect();
+    Cow::Owned(lines.join("\n"))
+}
+
+fn after_last_cr(line: &str) -> &str {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    match line.contains('\r') {
+        true => line.rsplit('\r').find(|seg| !seg.is_empty()).unwrap_or(""),
+        false => line,
+    }
+}
+
+/// Compares two outputs line by line, as they are shown.
 pub fn line_change(prev: &str, cur: &str) -> Option<Change> {
+    let (prev, cur) = (clean_output(prev), clean_output(cur));
     let (mut a, mut b) = (prev.lines(), cur.lines());
     let mut first = None;
     let mut lines = 0;
@@ -191,7 +217,7 @@ impl App {
             diff: cli.differences,
             bell: cli.bell,
             show_title: !cli.no_title,
-            wrap: !cli.unfold,
+            wrap: cli.wrap,
             show_help: false,
             redraw: false,
             help_scroll: 0,
@@ -214,6 +240,7 @@ impl App {
             search_origin: 0,
             message: None,
             pending_jump: None,
+            current_match: None,
             exit: None,
             cache: None,
             change_cache: None,
@@ -249,7 +276,9 @@ impl App {
             }
             Msg::Finished(mut snap) => {
                 self.running.remove(&snap.id);
-                let pos = self.history.partition_point(|s| s.id < snap.id);
+                // Ordered by the newest run each snapshot stands for, so a run that
+                // finishes late can't pass one that already includes a newer run.
+                let pos = self.history.partition_point(|s| s.last_id < snap.id);
                 let is_latest = pos == self.history.len();
                 let failed = snap.code != Some(0);
                 let code = snap.code.unwrap_or(-1);
@@ -664,8 +693,9 @@ impl App {
     /// clamped to the visible output area.
     fn content_pos(&self, x: u16, y: u16) -> (usize, usize) {
         let a = self.output_area;
-        let x = x.clamp(a.x, a.right().saturating_sub(1));
-        let y = y.clamp(a.y, a.bottom().saturating_sub(1));
+        // `.max`: an area shrunk to nothing mid-drag must not make min > max
+        let x = x.clamp(a.x, a.right().saturating_sub(1).max(a.x));
+        let y = y.clamp(a.y, a.bottom().saturating_sub(1).max(a.y));
         let rows = self.cached_rows().map(|r| r.lines.len()).unwrap_or(0);
         let row = (self.scroll_y + (y - a.y) as usize).min(rows.saturating_sub(1));
         (row, self.scroll_x + (x - a.x) as usize)
@@ -690,12 +720,7 @@ impl App {
         if text.is_empty() {
             return;
         }
-        copy_to_clipboard(text);
-        let n = text.chars().count();
-        self.message = Some(format!(
-            "Copied {n} character{} to the clipboard",
-            if n == 1 { "" } else { "s" }
-        ));
+        self.message = Some(crate::terminal::copy(&mut std::io::stdout(), text));
     }
 
     /// The history text covered by `sel`, one list row per line.
@@ -797,6 +822,7 @@ impl App {
                 self.search = Matcher::new(&query, false);
                 self.search_hidden = false;
                 self.search_open = false;
+                self.current_match = None;
                 self.scroll_y = self.search_origin;
                 if self.search.is_some() {
                     self.pending_jump = Some(Jump::From(self.search_origin, true));
@@ -844,52 +870,76 @@ impl App {
         let Some((_, rows)) = self.cache.as_ref() else {
             return;
         };
-        let matches = &rows.matches;
-        let (Some(&first), Some(&last)) = (matches.first(), matches.last()) else {
-            if matches!(jump, Jump::From(_, false)) {
-                return;
+        let n = rows.matches.len();
+        if n == 0 {
+            if !matches!(jump, Jump::From(_, false)) {
+                let label = self.search.as_ref().map(Matcher::label).unwrap_or_default();
+                self.message = Some(format!("Pattern not found: {label}"));
             }
-            let label = self.search.as_ref().map(Matcher::label).unwrap_or_default();
-            self.message = Some(format!("Pattern not found: {label}"));
             return;
+        }
+        let matches = &rows.matches;
+        let (top, bottom) = (self.scroll_y, self.scroll_y + self.view_height);
+        let (target, wrapped) = match (jump, self.match_cursor()) {
+            (Jump::From(from, _), _) => match matches.iter().position(|&r| r >= from) {
+                Some(i) => (i, None),
+                None => (0, None),
+            },
+            // From the current match while it is on screen, else from the screen
+            (Jump::Next, Some(i)) if i + 1 < n => (i + 1, None),
+            (Jump::Next, Some(_)) => (0, Some(true)),
+            (Jump::Next, None) => match matches.iter().position(|&r| r >= top) {
+                Some(i) => (i, None),
+                None => (0, Some(true)),
+            },
+            (Jump::Prev, Some(i)) if i > 0 => (i - 1, None),
+            (Jump::Prev, Some(_)) => (n - 1, Some(false)),
+            (Jump::Prev, None) => match matches.iter().rposition(|&r| r < bottom) {
+                Some(i) => (i, None),
+                None => (n - 1, Some(false)),
+            },
         };
-        let cur = self.scroll_y;
-        let target = match jump {
-            Jump::From(from, _) => matches
-                .iter()
-                .copied()
-                .find(|&r| r >= from)
-                .unwrap_or(first),
-            Jump::Next => matches
-                .iter()
-                .copied()
-                .find(|&r| r > cur)
-                .unwrap_or_else(|| {
-                    self.message = Some("Search hit BOTTOM, continuing at TOP".into());
-                    first
-                }),
-            Jump::Prev => matches
-                .iter()
-                .rev()
-                .copied()
-                .find(|&r| r < cur)
-                .unwrap_or_else(|| {
-                    self.message = Some("Search hit TOP, continuing at BOTTOM".into());
-                    last
-                }),
-        };
-        self.scroll_y = target;
+        match wrapped {
+            Some(true) => self.message = Some("Search hit BOTTOM, continuing at TOP".into()),
+            Some(false) => self.message = Some("Search hit TOP, continuing at BOTTOM".into()),
+            None => {}
+        }
+        let row = matches[target];
+        self.current_match = Some(row);
+        self.reveal_row(row);
     }
 
-    /// Position of the match at the top of the view, and how many there are.
+    /// Scrolls only as far as needed to show `row` with a few rows of context, the
+    /// way git-graph keeps its selected commit in view.
+    fn reveal_row(&mut self, row: usize) {
+        let margin = 3.min(self.view_height / 4);
+        if row < self.scroll_y + margin {
+            self.scroll_y = row.saturating_sub(margin);
+        } else if row + margin >= self.scroll_y + self.view_height {
+            self.scroll_y = (row + margin + 1).saturating_sub(self.view_height);
+        }
+    }
+
+    /// Index (into the matches) of the current match, while it is on screen.
+    pub fn match_cursor(&self) -> Option<usize> {
+        let row = self.current_match?;
+        if row < self.scroll_y || row >= self.scroll_y + self.view_height {
+            return None;
+        }
+        self.cached_rows()?.matches.binary_search(&row).ok()
+    }
+
+    /// Row of the current match, highlighted unless esc has hidden the highlights.
+    pub fn current_match_row(&self) -> Option<usize> {
+        self.match_cursor()
+            .filter(|_| !self.search_hidden && !self.search_open)
+            .and(self.current_match)
+    }
+
+    /// The current match's position (while on screen) and how many there are.
     pub fn match_position(&self) -> (Option<usize>, usize) {
-        let Some(rows) = self.cached_rows() else {
-            return (None, 0);
-        };
-        (
-            rows.matches.iter().position(|&r| r == self.scroll_y),
-            rows.matches.len(),
-        )
+        let total = self.cached_rows().map_or(0, |r| r.matches.len());
+        (self.match_cursor(), total)
     }
 
     /// Called after rows are (re)built for the frame: performs a deferred jump
@@ -1000,7 +1050,8 @@ pub fn build_rows(
 /// Parses ANSI output into lines of (char, style), expanding tabs and
 /// dropping other control characters.
 fn styled_chars(output: &str) -> Vec<Vec<(char, Style)>> {
-    let output = output.strip_suffix('\n').unwrap_or(output);
+    let output = clean_output(output);
+    let output = output.strip_suffix('\n').unwrap_or(&output);
     let text: Text = output
         .as_bytes()
         .into_text()
@@ -1072,36 +1123,6 @@ pub fn slice_columns(text: &str, from: usize, to: usize) -> String {
     out
 }
 
-/// Puts `text` on the system clipboard with an OSC 52 escape sequence,
-/// which most modern terminals (and tmux with `set-clipboard on`) support.
-fn copy_to_clipboard(text: &str) {
-    let seq = format!("\x1b]52;c;{}\x07", base64(text.as_bytes()));
-    let mut out = std::io::stdout();
-    let _ = out.write_all(seq.as_bytes());
-    let _ = out.flush();
-}
-
-fn base64(data: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
 fn to_line(chars: Vec<(char, Style)>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
@@ -1136,6 +1157,7 @@ mod tests {
             changed: false,
             runs: 1,
             last_seen: Local::now(),
+            last_id: id,
         }
     }
 
@@ -1186,15 +1208,6 @@ mod tests {
             line_change("a\nb\nc", "a"),
             Some(Change { first: 2, lines: 2 })
         );
-    }
-
-    #[test]
-    fn base64_encoding() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64("héllo\n".as_bytes()), "aMOpbGxvCg==");
     }
 
     #[test]
@@ -1277,6 +1290,7 @@ mod history_tests {
             changed: false,
             runs: 1,
             last_seen: t,
+            last_id: id,
         }));
     }
 
@@ -1321,5 +1335,68 @@ mod history_tests {
         // Unchanged results share one buffer.
         assert!(Arc::ptr_eq(&a.history[0].output, &a.history[2].output));
         assert_eq!(a.history_bytes, 4);
+    }
+
+    #[test]
+    fn output_is_cleaned_like_track() {
+        assert_eq!(clean_output("10%\r20%\r100%\ndone\n"), "100%\ndone\n");
+        assert_eq!(
+            clean_output("a \x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ b"),
+            "a link b"
+        );
+        // Lines are counted as they are shown
+        let c = line_change("x\r1\nsame\n", "x\r2\nsame\n").unwrap();
+        assert_eq!((c.first, c.lines), (1, 1));
+    }
+
+    #[test]
+    fn late_run_does_not_pass_a_newer_merged_one() {
+        let mut a = app(&["-p", "-e"]);
+        done(&mut a, 1, "ok\n", 0);
+        done(&mut a, 3, "ok\n", 0); // merged into snapshot 1
+        done(&mut a, 2, "timeout\n", 1); // started earlier, finished last
+        assert_eq!(&*a.current().unwrap().output, "ok\n");
+        assert!(a.exit.is_none());
+    }
+
+    #[test]
+    fn huge_intervals_are_errors_not_panics() {
+        assert!(Cli::try_parse_from(["monitor", "-n", "1e20", "true"]).is_err());
+        assert!(Cli::try_parse_from(["monitor", "-n", "1e19", "true"]).is_ok());
+    }
+
+    #[test]
+    fn n_steps_through_every_match_and_wraps() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+        let press = |a: &mut App, c: KeyCode| a.on_key(KeyEvent::new(c, KeyModifiers::NONE));
+        let mut a = app(&[]);
+        let out: String = (1..=100).map(|i| format!("{i}\n")).collect();
+        done(&mut a, 1, &out, 0);
+        let mut term = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut draw = |a: &mut App| {
+            term.draw(|f| crate::ui::draw(f, a, "host")).unwrap();
+        };
+        draw(&mut a);
+        press(&mut a, KeyCode::Char('/'));
+        press(&mut a, KeyCode::Char('9'));
+        press(&mut a, KeyCode::Enter);
+        draw(&mut a);
+        // 9, 19, …, 89, 90 … 99: 19 matches, the last ten on the last screen
+        let mut seen = vec![a.match_position()];
+        for _ in 0..19 {
+            press(&mut a, KeyCode::Char('n'));
+            draw(&mut a);
+            seen.push(a.match_position());
+        }
+        let expected: Vec<_> = (0..19).chain([0]).map(|i| (Some(i), 19)).collect();
+        assert_eq!(seen, expected);
+        assert_eq!(
+            a.message.as_deref(),
+            Some("Search hit BOTTOM, continuing at TOP")
+        );
+        // The current match's row is highlighted
+        assert_eq!(a.current_match_row(), Some(8));
     }
 }

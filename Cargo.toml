@@ -13,6 +13,8 @@ humantime = "2.4.0"
 libc = "0.2.191"
 ratatui = "0.30.2"
 regex = "1.13.1"
+signal-hook = "0.3.18"
+unicode-segmentation = "1.13.3"
 unicode-width = "0.2.3"
 
 [profile.release]
