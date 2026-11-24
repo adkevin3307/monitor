@@ -63,6 +63,8 @@ pub struct App {
     pub show_history: bool,
     pub wrap: bool,
     pub show_help: bool,
+    /// Output pane fills the whole terminal.
+    pub zoom: bool,
 
     pub scroll_y: usize,
     pub scroll_x: usize,
@@ -101,6 +103,7 @@ impl App {
             show_history: true,
             wrap: !cli.unfold,
             show_help: false,
+            zoom: false,
             scroll_y: 0,
             scroll_x: 0,
             view_height: 0,
@@ -363,6 +366,7 @@ impl App {
             }
             KeyCode::Char('t') => self.show_title = !self.show_title,
             KeyCode::Char('H') => self.show_history = !self.show_history,
+            KeyCode::Char('z') => self.zoom = !self.zoom,
             KeyCode::Char('w') | KeyCode::Char('u') => self.wrap = !self.wrap,
 
             // scrolling

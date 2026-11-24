@@ -15,25 +15,31 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 const ACCENT: Color = Color::Cyan;
 
 pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
+    // In zoom mode the output gets the whole terminal; the footer only shows
+    // up while typing a search or showing a message.
+    let show_title = app.show_title && !app.zoom;
+    let show_footer = !app.zoom || app.search_input.is_some() || app.message.is_some();
     let [title, main, footer] = Layout::vertical([
-        Constraint::Length(if app.show_title { 1 } else { 0 }),
+        Constraint::Length(if show_title { 1 } else { 0 }),
         Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Length(if show_footer { 1 } else { 0 }),
     ])
     .areas(f.area());
 
-    let hist_w = if app.show_history && main.width >= 50 { 22 } else { 0 };
+    let hist_w = if app.show_history && !app.zoom && main.width >= 50 { 22 } else { 0 };
     let [body, hist] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(hist_w)]).areas(main);
 
-    if app.show_title {
+    if show_title {
         draw_title(f, app, title, hostname);
     }
     draw_body(f, app, body);
     if hist_w > 0 {
         draw_history(f, app, hist);
     }
-    draw_footer(f, app, footer);
+    if show_footer {
+        draw_footer(f, app, footer);
+    }
     if app.show_help {
         draw_help(f);
     }
@@ -85,6 +91,10 @@ fn mode_badge(app: &App) -> Line<'static> {
 }
 
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.zoom {
+        draw_output(f, app, area, None);
+        return;
+    }
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(if app.time_machine() { Color::Magenta } else { Color::DarkGray }))
@@ -111,6 +121,12 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
 
     let inner = block.inner(area);
     f.render_widget(block, area);
+    draw_output(f, app, inner, Some(area));
+}
+
+/// Draws the output rows into `inner`. `frame` is the bordered area around
+/// it, used for the scrollbar and position indicator (absent when zoomed).
+fn draw_output(f: &mut Frame, app: &mut App, inner: Rect, frame: Option<Rect>) {
     app.view_height = inner.height as usize;
     app.view_width = inner.width as usize;
 
@@ -127,6 +143,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     let visible: Vec<Line> = rows.lines[app.scroll_y.min(end)..end].to_vec();
     f.render_widget(Paragraph::new(visible).scroll((0, app.scroll_x as u16)), inner);
 
+    let Some(area) = frame else { return };
     if total > inner.height as usize {
         let mut state = ScrollbarState::new(total.saturating_sub(inner.height as usize))
             .position(app.scroll_y)
@@ -260,6 +277,7 @@ fn draw_help(f: &mut Frame) {
             ("PgDn PgUp Ctrl-F/B", "page down / up"),
             ("gg / G", "top / bottom"),
             ("h l ← → 0", "scroll horizontally (when unwrapped)"),
+            ("z", "zoom: output pane fills the whole terminal"),
             ("d  b  w  t  H", "toggle diff / bell / wrap / title / history"),
         ]),
         ("Search", &[

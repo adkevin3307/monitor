@@ -61,6 +61,7 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `gg` / `G` | scroll |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
+| `z` | zoom: the output fills the whole terminal |
 | `d` `b` `w` `t` `H` | toggle diff / bell / wrap / title / history panel |
 
 The history panel lists results newest first. `●` marks results whose output
