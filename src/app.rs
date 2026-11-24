@@ -98,6 +98,9 @@ pub struct App {
     pub show_title: bool,
     pub wrap: bool,
     pub show_help: bool,
+    /// Help scroll position; `help_max` is set when it is drawn.
+    pub help_scroll: usize,
+    pub help_max: usize,
 
     pub scroll_y: usize,
     pub scroll_x: usize,
@@ -184,6 +187,8 @@ impl App {
             show_title: !cli.no_title,
             wrap: !cli.unfold,
             show_help: false,
+            help_scroll: 0,
+            help_max: 0,
             scroll_y: 0,
             scroll_x: 0,
             view_height: 0,
@@ -430,7 +435,17 @@ impl App {
         }
 
         if self.show_help {
-            self.show_help = false;
+            // Scroll when the help doesn't fit; any other key closes it.
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => self.help_scroll += 1,
+                KeyCode::Char('k') | KeyCode::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
+                KeyCode::PageDown => self.help_scroll += 10,
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(10),
+                KeyCode::Char('g') => self.help_scroll = 0,
+                KeyCode::Char('G') => self.help_scroll = usize::MAX,
+                _ => self.show_help = false,
+            }
+            self.help_scroll = self.help_scroll.min(self.help_max);
             return;
         }
         self.selection = None;
@@ -459,7 +474,10 @@ impl App {
                     self.selected = None;
                 }
             }
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') => {
+                self.show_help = true;
+                self.help_scroll = 0;
+            }
 
             // time machine
             KeyCode::Char(' ') => {
@@ -484,7 +502,7 @@ impl App {
             KeyCode::Char('d') => self.diff = !self.diff,
             KeyCode::Char('b') => {
                 self.bell = !self.bell;
-                self.message = Some(format!("bell {}", if self.bell { "on" } else { "off" }));
+                self.message = Some(format!("Bell {}", if self.bell { "on" } else { "off" }));
             }
             KeyCode::Char('t') => self.show_title = !self.show_title,
             KeyCode::Char('w') | KeyCode::Char('u') => self.wrap = !self.wrap,
@@ -518,7 +536,17 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.show_help || self.search_open {
+        // ctrl + wheel scrolls faster, as in track and git-graph.
+        let lines = if mouse.modifiers.contains(KeyModifiers::CONTROL) { 15 } else { MOUSE_SCROLL_LINES };
+        if self.show_help {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => self.help_scroll = (self.help_scroll + 3).min(self.help_max),
+                MouseEventKind::ScrollUp => self.help_scroll = self.help_scroll.saturating_sub(3),
+                _ => {}
+            }
+            return;
+        }
+        if self.search_open {
             return;
         }
         let pos = Position::new(mouse.column, mouse.row);
@@ -576,8 +604,8 @@ impl App {
             // The history lists newest first, so scrolling down goes to older results.
             MouseEventKind::ScrollDown if over_history => self.move_history(-1),
             MouseEventKind::ScrollUp if over_history => self.move_history(1),
-            MouseEventKind::ScrollDown => self.scroll_y += MOUSE_SCROLL_LINES,
-            MouseEventKind::ScrollUp => self.scroll_y = self.scroll_y.saturating_sub(MOUSE_SCROLL_LINES),
+            MouseEventKind::ScrollDown => self.scroll_y += lines,
+            MouseEventKind::ScrollUp => self.scroll_y = self.scroll_y.saturating_sub(lines),
             MouseEventKind::ScrollRight => self.scroll_x += 4,
             MouseEventKind::ScrollLeft => self.scroll_x = self.scroll_x.saturating_sub(4),
             _ => return,
@@ -613,7 +641,7 @@ impl App {
         }
         copy_to_clipboard(text);
         let n = text.chars().count();
-        self.message = Some(format!("copied {n} character{} to the clipboard", if n == 1 { "" } else { "s" }));
+        self.message = Some(format!("Copied {n} character{} to the clipboard", if n == 1 { "" } else { "s" }));
     }
 
     /// The history text covered by `sel`, one list row per line.
@@ -731,7 +759,7 @@ impl App {
     /// n / N: shows hidden highlights and jumps once the rows are rebuilt.
     fn request_jump(&mut self, jump: Jump) {
         if self.search.is_none() {
-            self.message = Some("no search (press /)".into());
+            self.message = Some("No active search (press / to search)".into());
             return;
         }
         self.search_hidden = false;
@@ -746,18 +774,18 @@ impl App {
                 return;
             }
             let label = self.search.as_ref().map(Matcher::label).unwrap_or_default();
-            self.message = Some(format!("pattern not found: {label}"));
+            self.message = Some(format!("Pattern not found: {label}"));
             return;
         };
         let cur = self.scroll_y;
         let target = match jump {
             Jump::From(from, _) => matches.iter().copied().find(|&r| r >= from).unwrap_or(first),
             Jump::Next => matches.iter().copied().find(|&r| r > cur).unwrap_or_else(|| {
-                self.message = Some("search hit BOTTOM, continuing at TOP".into());
+                self.message = Some("Search hit BOTTOM, continuing at TOP".into());
                 first
             }),
             Jump::Prev => matches.iter().rev().copied().find(|&r| r < cur).unwrap_or_else(|| {
-                self.message = Some("search hit TOP, continuing at BOTTOM".into());
+                self.message = Some("Search hit TOP, continuing at BOTTOM".into());
                 last
             }),
         };

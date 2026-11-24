@@ -57,7 +57,7 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
         draw_search(f, app);
     }
     if app.show_help {
-        draw_help(f);
+        draw_help(f, app);
     }
 }
 
@@ -415,7 +415,7 @@ fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let left = if let Some(msg) = &app.message {
-        Line::styled(format!(" {msg}"), Style::new().fg(Color::Yellow))
+        Line::styled(format!(" {msg}"), Style::new().fg(YELLOW))
     } else if app.time_machine() {
         Line::from(key_hints(&[
             ("J/K", "older/newer"),
@@ -454,7 +454,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
 }
 
-fn draw_help(f: &mut Frame) {
+fn draw_help(f: &mut Frame, app: &mut App) {
     let rows: &[(&str, &str)] = &[
         ("General", ""),
         ("q, ctrl-c", "quit"),
@@ -472,7 +472,7 @@ fn draw_help(f: &mut Frame) {
         ("ctrl-d/u", "half page down / up"),
         ("PgDn/PgUp, ctrl-f/b", "page down / up"),
         ("g / G", "top / bottom"),
-        ("mouse wheel", "scroll; over the history, older / newer result"),
+        ("mouse wheel", "scroll (ctrl: faster); over the history, older / newer"),
         ("click", "select a result in the history"),
         ("drag", "select text (output or history); copied on release"),
         ("shift-drag", "the terminal's own selection"),
@@ -492,15 +492,29 @@ fn draw_help(f: &mut Frame) {
                 Line::styled(format!(" {k}"), Style::new().fg(ACCENT))
             } else {
                 Line::from(vec![
-                    Span::styled(format!("   {k:<22}"), Style::new().fg(Color::Yellow)),
+                    Span::styled(format!("   {k:<24}"), Style::new().fg(YELLOW)),
                     Span::raw(*v),
                 ])
             }
         })
         .collect();
-    let area = centered(f.area(), 80, lines.len() as u16 + 2);
+    // The same help window as track and git-graph.
+    let area = centered(f.area(), 88, lines.len() as u16 + 2);
+    let max = lines.len().saturating_sub(area.height.saturating_sub(2) as usize);
+    app.help_max = max;
+    app.help_scroll = app.help_scroll.min(max);
+    let title = if max > 0 {
+        " Help — j/k scroll, any other key closes "
+    } else {
+        " Help — any key to close "
+    };
     f.render_widget(Clear, area);
-    f.render_widget(Paragraph::new(lines).block(panel(" Help — any key to close ", true)), area);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((app.help_scroll.min(u16::MAX as usize) as u16, 0))
+            .block(panel(Span::styled(title, Style::new().fg(ACCENT)), true)),
+        area,
+    );
 }
 
 fn format_duration(d: std::time::Duration) -> String {

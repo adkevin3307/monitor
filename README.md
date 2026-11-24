@@ -63,7 +63,7 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `s` / `r` | suspend or resume / run now |
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `Ctrl-F/B` | scroll a line / half a page / a page |
 | `g` / `G` | top / bottom |
-| mouse wheel | scroll; over the history panel, older / newer result |
+| mouse wheel | scroll (hold `Ctrl` to scroll faster); over the history panel, older / newer result |
 | mouse click | select a result in the history panel |
 | mouse drag | select text in the output or the history; it's copied to the clipboard when you release |
 | shift + drag | your terminal's own text selection |
@@ -101,9 +101,9 @@ keys do the same thing in all three:
 | `home` / `end` | Line start / end (not top / bottom) |
 | `/`, `n` / `N` | Search, next / previous match |
 | `esc` | Hide the search highlights, then go back |
-| `?` | Help (any key closes it; `j`/`k` scroll it when it doesn't fit) |
+| `?` | Help, in the same window everywhere (`j`/`k` or the wheel scroll it; any other key closes it) |
 | `q`, `ctrl-c` | Quit |
-| mouse wheel | Scroll |
+| mouse wheel | Scroll (`ctrl` + wheel: faster) |
 | mouse drag | Select text and copy it with OSC 52 on release |
 | shift + drag | The terminal's own selection |
 
