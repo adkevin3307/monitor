@@ -35,6 +35,9 @@ fn main() -> anyhow::Result<()> {
             if app.exit.is_some() {
                 return Ok(());
             }
+            if std::mem::take(&mut app.redraw) {
+                terminal.clear()?;
+            }
             terminal.draw(|f| ui::draw(f, &mut app, &hostname))?;
 
             if event::poll(Duration::from_millis(100))? {

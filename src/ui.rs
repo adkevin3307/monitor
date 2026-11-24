@@ -495,13 +495,15 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let line = if let Some(msg) = &app.message {
         Line::styled(format!(" {msg}"), Style::new().fg(YELLOW))
     } else if app.time_machine() {
+        // The same words as track's and git-graph's footers.
         footer_hints(
             &[
-                ("j/k", "scroll"),
+                ("j/k", "down/up"),
+                ("g/G", "top/bottom"),
                 ("/", "search"),
                 ("n/N", "next/prev"),
                 ("J/K", "older/newer"),
-                ("esc", "live"),
+                ("esc", "back"),
                 ("?", "help"),
                 ("q", "quit"),
             ],
@@ -510,7 +512,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     } else {
         footer_hints(
             &[
-                ("j/k", "scroll"),
+                ("j/k", "down/up"),
+                ("g/G", "top/bottom"),
                 ("/", "search"),
                 ("n/N", "next/prev"),
                 ("space", "time machine"),
@@ -536,40 +539,48 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 }
 
 fn draw_help(f: &mut Frame, app: &mut App) {
+    // The same sections and wording as track's and git-graph's help.
     let rows: &[(&str, &str)] = &[
-        ("General", ""),
-        ("q, ctrl-c", "quit"),
-        ("?", "toggle this help"),
-        ("s", "suspend / resume running the command"),
-        ("r", "run the command now"),
+        ("Navigation", ""),
+        ("j/k ↓/↑", "down / up"),
+        ("ctrl-d/u", "half page down / up"),
+        ("PgDn/PgUp, ctrl-f/b", "page down / up"),
+        ("g/G", "top / bottom"),
+        ("h/l ←/→", "left / right 4 columns (when not wrapping)"),
+        ("H/L", "left / right half a page (when not wrapping)"),
+        ("home/end", "line start / end (when not wrapping)"),
+        ("Search", ""),
+        ("/", "search (regex, smart case)"),
+        ("n / N", "next / previous match"),
+        ("esc", "hide search highlights, then back to the live view"),
         ("Time machine", ""),
-        (
-            "space",
-            "toggle time machine (pause the view, show history)",
-        ),
+        ("space", "toggle time machine"),
         ("J / K", "older / newer result"),
         ("< / >", "oldest / newest result"),
         ("esc", "back to the live view"),
-        ("Output", ""),
-        ("j/k ↑/↓", "scroll"),
-        ("ctrl-d/u", "half page down / up"),
-        ("PgDn/PgUp, ctrl-f/b", "page down / up"),
-        ("g / G", "top / bottom"),
+        ("Input box", ""),
+        ("←/→ home/end ctrl-a/e", "move the cursor"),
+        ("ctrl-u / ctrl-w", "delete to start / previous word"),
+        ("↑/↓", "history"),
+        ("enter", "submit"),
+        ("esc, ctrl-c", "cancel"),
+        ("Mouse", ""),
         (
-            "mouse wheel",
-            "scroll (ctrl: faster); over the history, older / newer",
+            "wheel",
+            "scroll (ctrl: faster; over the history: older / newer result)",
         ),
         ("click", "select a result in the history"),
-        ("drag", "select text (output or history); copied on release"),
+        ("drag", "select text; copied on release"),
         ("shift-drag", "the terminal's own selection"),
-        ("h/l ←/→", "scroll sideways 4 columns (when not wrapping)"),
-        ("H/L", "scroll sideways half a page"),
-        ("home/end", "line start / end (when not wrapping)"),
-        ("d / b / w / t", "toggle diff / bell / wrap / title"),
-        ("Search", ""),
-        ("/", "search: regex, smart case; jumps while typing"),
-        ("n / N", "next / previous match; shows hidden highlights"),
-        ("esc", "hide search highlights (then: back to live)"),
+        ("General", ""),
+        ("s", "suspend / resume running the command"),
+        ("d", "toggle diff"),
+        ("b", "toggle bell"),
+        ("w", "toggle wrap"),
+        ("t", "toggle title"),
+        ("r", "refresh (run the command now)"),
+        ("?", "help"),
+        ("q, ctrl-c", "quit"),
     ];
     let lines: Vec<Line> = rows
         .iter()

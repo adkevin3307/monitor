@@ -9,7 +9,7 @@ It runs a command over and over and shows its output full-screen, and adds:
   The header lists the toggles that are on (`diff · bell · wrap`).
 - **ANSI colors**: keeps the colors from the command's output.
 - **Scrolling and search**: vim-style keys, and `/` regex search (smart case) in a small input box that jumps to matches while you type; `n`/`N` step through them and `Esc` hides the highlights. See [Shared search](#shared-search).
-- **Suspend / run now**: `s` pauses running the command, `r` runs it right away.
+- **Suspend / refresh**: `s` pauses running the command, `r` refreshes (runs it right away).
 - **Precise mode** (`-p`): starts a run every interval, even if the previous one is still going.
 - **watch-style exits**: `-e` exits on a non-zero status, `-g` exits when the output changes.
 
@@ -53,26 +53,70 @@ Many programs turn off colors when their output isn't a terminal, so pass
 
 ## Keys
 
+Press `?` in the app for this list (`j`/`k` or the wheel scroll it when it
+doesn't fit; any other key closes it). The keys and their wording are the
+same in track, monitor and git-graph (see the shared key guideline below).
+
+**Navigation**
+
 | Key | Action |
-| --- | --- |
-| `q`, `Ctrl-C` | quit |
-| `?` | help |
-| `space` | toggle time machine |
-| `J` / `K` | older / newer result |
-| `<` / `>` | oldest / newest result |
-| `Esc` | hide the search highlights, or go back to the live view |
-| `s` / `r` | suspend or resume / run now |
-| `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `Ctrl-F/B` | scroll a line / half a page / a page |
-| `g` / `G` | top / bottom |
-| mouse wheel | scroll (hold `Ctrl` to scroll faster); over the history panel, older / newer result |
-| mouse click | select a result in the history panel |
-| mouse drag | select text in the output or the history; it's copied to the clipboard when you release |
-| shift + drag | your terminal's own text selection |
-| `h` `l` `←` `→` | scroll sideways 4 columns (when lines aren't wrapped) |
-| `H` / `L` | scroll sideways half a page |
-| `Home` / `End` | line start / end (when lines aren't wrapped) |
-| `/`, `n` / `N` | search (regex, smart case), next / previous match (`n` / `N` also show hidden highlights) |
-| `d` `b` `w` `t` | toggle diff / bell / wrap / title |
+|---|---|
+| `j`/`k`, `↓`/`↑` | Down / up |
+| `ctrl-d`/`ctrl-u` | Half page down / up |
+| `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | Page down / up |
+| `g` / `G` | Top / bottom |
+| `h`/`l`, `←`/`→` | Left / right 4 columns (when not wrapping) |
+| `H`/`L` | Left / right half a page (when not wrapping) |
+| `home` / `end` | Line start / end (when not wrapping) |
+
+**Search**
+
+| Key | Action |
+|---|---|
+| `/` | Search (regex, smart case) |
+| `n` / `N` | Next / previous match |
+| `esc` | Hide search highlights, then back to the live view |
+
+**Time machine**
+
+| Key | Action |
+|---|---|
+| `space` | Toggle time machine |
+| `J` / `K` | Older / newer result |
+| `<` / `>` | Oldest / newest result |
+| `esc` | Back to the live view |
+
+**Input box** (the `/` box)
+
+| Key | Action |
+|---|---|
+| `←`/`→`, `home`/`end`, `ctrl-a`/`ctrl-e` | Move the cursor |
+| `ctrl-u` / `ctrl-w` | Delete to start / previous word |
+| `↑`/`↓` | History |
+| `enter` | Submit |
+| `esc`, `ctrl-c` | Cancel (`backspace` on an empty box too) |
+
+**Mouse**
+
+| Key | Action |
+|---|---|
+| wheel | Scroll (`ctrl`: faster; over the history: older / newer result) |
+| click | Select a result in the history |
+| drag | Select text in the output or the history; copied on release (OSC 52) |
+| shift + drag | The terminal's own selection |
+
+**General**
+
+| Key | Action |
+|---|---|
+| `s` | Suspend / resume running the command |
+| `d` | Toggle diff |
+| `b` | Toggle bell |
+| `w` | Toggle wrap |
+| `t` | Toggle title |
+| `r` | Refresh (run the command now) |
+| `?` | Help |
+| `q`, `ctrl-c` | Quit |
 
 While in time-machine mode, a history panel lists results newest first, by the
 time each one started. `×N` shows how many unchanged runs a result covers, and a
@@ -93,15 +137,17 @@ keys do the same thing in all three:
 
 | Key | Meaning |
 |---|---|
-| `j`/`k`, `↓`/`↑` | One line down / up |
-| `ctrl-d`/`ctrl-u` | Half a page down / up |
-| `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | A full page down / up |
+| `j`/`k`, `↓`/`↑` | Down / up |
+| `ctrl-d`/`ctrl-u` | Half page down / up |
+| `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | Page down / up |
 | `g` / `G` | Top / bottom |
-| `h`/`l` | Sideways 4 columns |
-| `H`/`L` | Sideways half a page |
+| `h`/`l` | Left / right 4 columns |
+| `H`/`L` | Left / right half a page |
 | `home` / `end` | Line start / end (not top / bottom) |
-| `/`, `n` / `N` | Search, next / previous match |
-| `esc` | Hide the search highlights, then go back |
+| `/`, `n` / `N` | Search (regex, smart case), next / previous match |
+| `esc` | Hide search highlights, then go back |
+| `w` | Toggle wrap (track, monitor) |
+| `r` | Refresh: redraw the screen, and run the command again (monitor) or reload the repository (git-graph) |
 | `?` | Help, in the same window everywhere (`j`/`k` or the wheel scroll it; any other key closes it) |
 | `q`, `ctrl-c` | Quit (in an input box, `ctrl-c` cancels it like `esc`) |
 | mouse wheel | Scroll (`ctrl` + wheel: faster) |
@@ -147,7 +193,7 @@ All three draw the same frame:
 │ content                                                                       █
 │                                                                               ║
 ╰──────────────────────────────────────────────────────────────────────────────╯
- j/k move  / search  n/N next/prev  tool keys…  esc back  ? help  q quit
+ j/k down/up  g/G top/bottom  / search  n/N next/prev  tool keys…  esc back  ? help  q quit
 ```
 
 - The header starts with the tool's name on a cyan badge; flags appear only

@@ -102,6 +102,8 @@ pub struct App {
     pub show_title: bool,
     pub wrap: bool,
     pub show_help: bool,
+    /// Clear and redraw the whole screen before the next frame (r: refresh).
+    pub redraw: bool,
     /// Help scroll position; `help_max` is set when it is drawn.
     pub help_scroll: usize,
     pub help_max: usize,
@@ -191,6 +193,7 @@ impl App {
             show_title: !cli.no_title,
             wrap: !cli.unfold,
             show_help: false,
+            redraw: false,
             help_scroll: 0,
             help_max: 0,
             scroll_y: 0,
@@ -520,7 +523,12 @@ impl App {
                 self.suspended = !self.suspended;
                 self.runner.set_suspended(self.suspended);
             }
-            KeyCode::Char('r') => self.runner.run_now(),
+            // Refresh: run the command now and redraw the whole screen, like r
+            // in track and git-graph.
+            KeyCode::Char('r') => {
+                self.runner.run_now();
+                self.redraw = true;
+            }
             KeyCode::Char('d') => self.diff = !self.diff,
             KeyCode::Char('b') => {
                 self.bell = !self.bell;
