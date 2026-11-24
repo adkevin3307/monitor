@@ -448,11 +448,13 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.scroll_y = self.scroll_y.saturating_sub(1),
             KeyCode::PageDown => self.scroll_y += page,
             KeyCode::PageUp => self.scroll_y = self.scroll_y.saturating_sub(page),
-            KeyCode::Char('g') | KeyCode::Home => self.scroll_y = 0,
-            KeyCode::Char('G') | KeyCode::End => self.scroll_y = usize::MAX,
+            KeyCode::Char('g') => self.scroll_y = 0,
+            KeyCode::Char('G') => self.scroll_y = usize::MAX,
             KeyCode::Char('h') | KeyCode::Left => self.scroll_x = self.scroll_x.saturating_sub(4),
             KeyCode::Char('l') | KeyCode::Right => self.scroll_x += 4,
-            KeyCode::Char('0') => self.scroll_x = 0,
+            // Line start / end (clamp_scroll stops at the end of the widest line)
+            KeyCode::Char('0') | KeyCode::Home => self.scroll_x = 0,
+            KeyCode::Char('$') | KeyCode::End => self.scroll_x = usize::MAX,
 
             // search
             KeyCode::Char('/') => self.search_input = Some(String::new()),

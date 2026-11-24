@@ -66,7 +66,8 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | mouse click | select a result in the history panel |
 | mouse drag | select output text; it's copied to the clipboard when you release |
 | shift + drag | your terminal's own text selection |
-| `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
+| `h` `l` `←` `→` | scroll horizontally (when lines aren't wrapped) |
+| `0` / `$`, `Home` / `End` | line start / end (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
