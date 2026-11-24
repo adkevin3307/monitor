@@ -40,7 +40,11 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
     .areas(f.area());
 
     // The history panel is only useful while browsing it.
-    let hist_w = if app.time_machine() && main.width >= 50 { HISTORY_WIDTH } else { 0 };
+    let hist_w = if app.time_machine() && main.width >= 50 {
+        HISTORY_WIDTH
+    } else {
+        0
+    };
     let [output, history] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(hist_w)]).areas(main);
 
@@ -147,7 +151,6 @@ fn draw_input(
     }
 }
 
-
 fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
     let mut spans = vec![
         Span::styled(" monitor ", Style::new().bg(ACCENT).fg(Color::Black)),
@@ -184,7 +187,10 @@ fn mode_line(app: &App) -> Line<'static> {
     let mut spans = vec![];
     if !app.running.is_empty() {
         let i = (Local::now().timestamp_millis() / 100) as usize % SPINNER.len();
-        spans.push(Span::styled(format!(" {}", SPINNER[i]), Style::new().fg(ACCENT)));
+        spans.push(Span::styled(
+            format!(" {}", SPINNER[i]),
+            Style::new().fg(ACCENT),
+        ));
     }
     if app.time_machine() {
         spans.push(Span::styled(" ◆ time machine", Style::new().fg(MAGENTA)));
@@ -204,7 +210,10 @@ fn mode_line(app: &App) -> Line<'static> {
             (None, n) => format!("{n} matches"),
         };
         let style = if app.search_hidden { DIM } else { YELLOW };
-        spans.insert(0, Span::styled(format!(" /{}", search.label()), Style::new().fg(style)));
+        spans.insert(
+            0,
+            Span::styled(format!(" /{}", search.label()), Style::new().fg(style)),
+        );
         spans.insert(1, Span::styled(format!("  {count} "), Style::new().fg(DIM)));
     }
     spans.push(Span::raw(" "));
@@ -214,7 +223,10 @@ fn mode_line(app: &App) -> Line<'static> {
 fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     // Lay out the rows (and do pending search jumps) first, so the title's
     // match count describes this frame.
-    let inner = area.inner(Margin { vertical: 1, horizontal: 1 });
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
     app.view_height = inner.height as usize;
     app.view_width = inner.width as usize;
     app.output_area = inner;
@@ -229,7 +241,10 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
             let sep = || Span::styled(" · ", Style::new().fg(DIM));
             let mut spans = vec![
                 Span::raw(" "),
-                Span::styled(s.start.format("%H:%M:%S%.3f").to_string(), Style::new().fg(TIME)),
+                Span::styled(
+                    s.start.format("%H:%M:%S%.3f").to_string(),
+                    Style::new().fg(TIME),
+                ),
                 sep(),
                 Span::styled(format_duration(s.duration), Style::new().fg(DIM)),
                 sep(),
@@ -265,9 +280,15 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(block, area);
 
     if !has_rows {
-        let msg = if app.running.is_empty() { "No output yet" } else { "Waiting for first run…" };
+        let msg = if app.running.is_empty() {
+            "No output yet"
+        } else {
+            "Waiting for first run…"
+        };
         f.render_widget(
-            Paragraph::new(msg).style(Style::new().fg(DIM)).alignment(Alignment::Center),
+            Paragraph::new(msg)
+                .style(Style::new().fg(DIM))
+                .alignment(Alignment::Center),
             inner,
         );
         return;
@@ -299,13 +320,29 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
                 .end_symbol(None)
                 .thumb_style(Style::new().fg(ACCENT))
                 .track_style(Style::new().fg(DIM)),
-            area.inner(Margin { vertical: 1, horizontal: 0 }),
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
             &mut state,
         );
-        let pos = Line::styled(format!(" {}-{}/{} ", app.scroll_y + 1, end, total), Style::new().fg(DIM))
-            .alignment(Alignment::Right);
-        let bottom = Rect { y: area.bottom() - 1, height: 1, ..area };
-        f.render_widget(pos, bottom.inner(Margin { vertical: 0, horizontal: 1 }));
+        let pos = Line::styled(
+            format!(" {}-{}/{} ", app.scroll_y + 1, end, total),
+            Style::new().fg(DIM),
+        )
+        .alignment(Alignment::Right);
+        let bottom = Rect {
+            y: area.bottom() - 1,
+            height: 1,
+            ..area
+        };
+        f.render_widget(
+            pos,
+            bottom.inner(Margin {
+                vertical: 0,
+                horizontal: 1,
+            }),
+        );
     }
 }
 
@@ -317,7 +354,9 @@ fn selected_style(style: Style) -> Style {
 
 /// Gives the selected columns of `line` (content row `row`) a selection background.
 fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Line<'static> {
-    let Some((from, to)) = sel.columns(row) else { return line.clone() };
+    let Some((from, to)) = sel.columns(row) else {
+        return line.clone();
+    };
     let mut spans = Vec::new();
     let mut col = 0;
     for span in &line.spans {
@@ -330,9 +369,16 @@ fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Lin
             if inside && !plain.is_empty() {
                 spans.push(Span::styled(std::mem::take(&mut plain), span.style));
             } else if !inside && !marked.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut marked), selected_style(span.style)));
+                spans.push(Span::styled(
+                    std::mem::take(&mut marked),
+                    selected_style(span.style),
+                ));
             }
-            if inside { marked.push(c) } else { plain.push(c) }
+            if inside {
+                marked.push(c)
+            } else {
+                plain.push(c)
+            }
             col += w;
         }
         if !plain.is_empty() {
@@ -361,7 +407,11 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 Style::new().fg(DIM)
             };
-            let runs = if s.runs > 1 { format!(" ×{}", s.runs) } else { String::new() };
+            let runs = if s.runs > 1 {
+                format!(" ×{}", s.runs)
+            } else {
+                String::new()
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(s.start.format("%H:%M:%S").to_string(), time),
                 Span::styled(runs, Style::new().fg(DIM)),
@@ -370,8 +420,11 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let block = panel(format!(" History ({n}) "), true).title_bottom(
-        Line::styled(format!(" {} ", format_bytes(app.history_bytes)), Style::new().fg(DIM))
-            .alignment(Alignment::Right),
+        Line::styled(
+            format!(" {} ", format_bytes(app.history_bytes)),
+            Style::new().fg(DIM),
+        )
+        .alignment(Alignment::Right),
     );
     let list = List::new(items)
         .block(block)
@@ -385,8 +438,13 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
     app.history_offset = state.offset();
 
     // Highlight selected text (columns start after the 2-cell "▶ " marker).
-    let Some(sel) = app.history_selection.filter(|s| s.dragged) else { return };
-    let inner = area.inner(Margin { vertical: 1, horizontal: 1 });
+    let Some(sel) = app.history_selection.filter(|s| s.dragged) else {
+        return;
+    };
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
     let buf = f.buffer_mut();
     for y in inner.y..inner.bottom() {
         let row = app.history_offset + (y - inner.y) as usize;
@@ -437,10 +495,17 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let toggle = |name: &'static str, on: bool| {
-        Span::styled(format!("{name} "), Style::new().fg(if on { ACCENT } else { DIM }))
+        Span::styled(
+            format!("{name} "),
+            Style::new().fg(if on { ACCENT } else { DIM }),
+        )
     };
     let mut right = vec![];
-    right.extend([toggle("diff", app.diff), toggle("bell", app.bell), toggle("wrap", app.wrap)]);
+    right.extend([
+        toggle("diff", app.diff),
+        toggle("bell", app.bell),
+        toggle("wrap", app.wrap),
+    ]);
     let right = Line::from(right);
     let rw = right.width() as u16;
     let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(rw)]).areas(area);
@@ -451,7 +516,12 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width.saturating_sub(2));
     let h = h.min(area.height.saturating_sub(2));
-    Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 fn draw_help(f: &mut Frame, app: &mut App) {
@@ -462,7 +532,10 @@ fn draw_help(f: &mut Frame, app: &mut App) {
         ("s", "suspend / resume running the command"),
         ("r", "run the command now"),
         ("Time machine", ""),
-        ("space", "toggle time machine (pause the view, show history)"),
+        (
+            "space",
+            "toggle time machine (pause the view, show history)",
+        ),
         ("J / shift-↓", "older result"),
         ("K / shift-↑", "newer result"),
         ("< / >", "oldest / newest result"),
@@ -472,7 +545,10 @@ fn draw_help(f: &mut Frame, app: &mut App) {
         ("ctrl-d/u", "half page down / up"),
         ("PgDn/PgUp, ctrl-f/b", "page down / up"),
         ("g / G", "top / bottom"),
-        ("mouse wheel", "scroll (ctrl: faster); over the history, older / newer"),
+        (
+            "mouse wheel",
+            "scroll (ctrl: faster); over the history, older / newer",
+        ),
         ("click", "select a result in the history"),
         ("drag", "select text (output or history); copied on release"),
         ("shift-drag", "the terminal's own selection"),
@@ -500,7 +576,9 @@ fn draw_help(f: &mut Frame, app: &mut App) {
         .collect();
     // The same help window as track and git-graph.
     let area = centered(f.area(), 88, lines.len() as u16 + 2);
-    let max = lines.len().saturating_sub(area.height.saturating_sub(2) as usize);
+    let max = lines
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize);
     app.help_max = max;
     app.help_scroll = app.help_scroll.min(max);
     let title = if max > 0 {
@@ -519,5 +597,9 @@ fn draw_help(f: &mut Frame, app: &mut App) {
 
 fn format_duration(d: std::time::Duration) -> String {
     let ms = d.as_secs_f64() * 1000.0;
-    if ms < 1000.0 { format!("{ms:.0}ms") } else { format!("{:.2}s", ms / 1000.0) }
+    if ms < 1000.0 {
+        format!("{ms:.0}ms")
+    } else {
+        format!("{:.2}s", ms / 1000.0)
+    }
 }

@@ -85,10 +85,17 @@ fn parse_interval(s: &str) -> Result<Duration, String> {
 
 fn parse_size(s: &str) -> Result<usize, String> {
     let s = s.trim();
-    let split = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+    let split = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
     let (num, unit) = s.split_at(split);
     let num: f64 = num.parse().map_err(|_| format!("invalid size `{s}`"))?;
-    let mult = match unit.trim().to_ascii_uppercase().trim_end_matches("IB").trim_end_matches('B') {
+    let mult = match unit
+        .trim()
+        .to_ascii_uppercase()
+        .trim_end_matches("IB")
+        .trim_end_matches('B')
+    {
         "" => 1u64,
         "K" => 1 << 10,
         "M" => 1 << 20,

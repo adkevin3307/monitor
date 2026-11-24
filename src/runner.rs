@@ -72,24 +72,38 @@ impl Runner {
         let children = Arc::new(Mutex::new(HashSet::new()));
 
         let spec = if cli.exec {
-            Spec { program: cli.command[0].clone(), args: cli.command[1..].to_vec() }
+            Spec {
+                program: cli.command[0].clone(),
+                args: cli.command[1..].to_vec(),
+            }
         } else {
-            let mut args: Vec<String> =
-                cli.shell_options.split_whitespace().map(str::to_owned).collect();
+            let mut args: Vec<String> = cli
+                .shell_options
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect();
             args.push("-c".into());
             args.push(cli.command_display());
-            Spec { program: cli.shell.clone(), args }
+            Spec {
+                program: cli.shell.clone(),
+                args,
+            }
         };
 
         let interval = cli.interval;
         let precise = cli.precise;
         let susp = suspended.clone();
         let kids = children.clone();
-        thread::spawn(move || {
-            run_loop(spec, interval, precise, susp, kids, msg_tx, trigger_rx)
-        });
+        thread::spawn(move || run_loop(spec, interval, precise, susp, kids, msg_tx, trigger_rx));
 
-        (Runner { suspended, trigger: trigger_tx, children }, msg_rx)
+        (
+            Runner {
+                suspended,
+                trigger: trigger_tx,
+                children,
+            },
+            msg_rx,
+        )
     }
 
     pub fn set_suspended(&self, value: bool) {
@@ -105,7 +119,11 @@ impl Runner {
 
     /// Kill every command that is still running.
     pub fn kill_all(&self) {
-        let pids: Vec<i32> = self.children.lock().map(|c| c.iter().copied().collect()).unwrap_or_default();
+        let pids: Vec<i32> = self
+            .children
+            .lock()
+            .map(|c| c.iter().copied().collect())
+            .unwrap_or_default();
         for pid in pids {
             // Each child is its own process group leader; kill the whole group.
             unsafe {
@@ -139,16 +157,16 @@ fn run_loop(
         }
         forced = false;
 
-        let deadline = if precise { tick + interval } else { Instant::now() + interval };
-        loop {
-            match trigger.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(()) => {
-                    forced = true;
-                    break;
-                }
-                Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => return,
-            }
+        let deadline = if precise {
+            tick + interval
+        } else {
+            Instant::now() + interval
+        };
+        // Wait for the next tick, or for "run now".
+        match trigger.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(()) => forced = true,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
@@ -162,7 +180,10 @@ fn run_once(id: usize, spec: &Spec, children: &Mutex<HashSet<i32>>, tx: &Sender<
     let clock = Instant::now();
     let (output, code) = match execute(spec, children) {
         Ok(r) => r,
-        Err(e) => (format!("monitor: failed to run `{}`: {e}\n", spec.program), None),
+        Err(e) => (
+            format!("monitor: failed to run `{}`: {e}\n", spec.program),
+            None,
+        ),
     };
     tx.send(Msg::Finished(Snapshot {
         id,

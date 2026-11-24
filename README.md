@@ -164,3 +164,34 @@ times; a plain click there picks a result.
 
 Shift + drag (Option + drag in iTerm2) still gives your terminal's own
 selection.
+
+## Development
+
+```sh
+cargo fmt
+cargo clippy --all-targets
+cargo test     # layout, diff, search, change summary and editor tests
+```
+
+| File | Contents |
+|---|---|
+| `src/runner.rs` | Running the command on a schedule; snapshots of each run |
+| `src/app.rs` | Application state: history, time machine, scrolling, search, selection |
+| `src/ui.rs` | Rendering with ratatui |
+| `src/cli.rs` | Command-line options |
+| `src/input.rs` | Search box line editor and history (shared) |
+| `src/matcher.rs` | Smart-case regex search patterns (shared) |
+| `src/main.rs` | Terminal setup and the event loop |
+
+### Code style
+
+track, monitor and git-graph share one code style, so a change can be
+carried between them:
+
+- `rustfmt.toml` is the same in all three; run `cargo fmt` before committing.
+- `cargo clippy --all-targets` must report nothing, and `cargo test` must pass.
+- `src/input.rs` (line editor and history) and `src/matcher.rs` (smart-case
+  regex search) are identical copies; change them in all three together.
+- The same `[profile.release]` (LTO, one codegen unit, stripped) and
+  `rust-version = "1.88"`; dependencies are listed alphabetically, with the
+  same versions where they overlap.

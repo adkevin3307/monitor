@@ -58,7 +58,11 @@ pub struct Selection {
 impl Selection {
     /// Start and end, in reading order; both ends are inclusive.
     pub fn range(&self) -> ((usize, usize), (usize, usize)) {
-        if self.anchor <= self.cursor { (self.anchor, self.cursor) } else { (self.cursor, self.anchor) }
+        if self.anchor <= self.cursor {
+            (self.anchor, self.cursor)
+        } else {
+            (self.cursor, self.anchor)
+        }
     }
 
     /// Columns `[from, to)` selected on `row`, if any.
@@ -221,10 +225,10 @@ impl App {
         if let Some(i) = self.selected {
             return Some(i);
         }
-        if let Some(id) = self.pinned {
-            if let Ok(i) = self.history.binary_search_by_key(&id, |s| s.id) {
-                return Some(i);
-            }
+        if let Some(id) = self.pinned
+            && let Ok(i) = self.history.binary_search_by_key(&id, |s| s.id)
+        {
+            return Some(i);
         }
         self.history.len().checked_sub(1)
     }
@@ -250,13 +254,12 @@ impl App {
                     self.exit = Some(ExitReason::Error(code));
                 }
 
-                if self.skip_unchanged {
-                    if let Some(prev) = pos.checked_sub(1).map(|p| &mut self.history[p]) {
-                        if prev.same_result(&snap) {
-                            prev.absorb(&snap);
-                            return;
-                        }
-                    }
+                if self.skip_unchanged
+                    && let Some(prev) = pos.checked_sub(1).map(|p| &mut self.history[p])
+                    && prev.same_result(&snap)
+                {
+                    prev.absorb(&snap);
+                    return;
                 }
 
                 snap.changed = match pos.checked_sub(1) {
@@ -282,22 +285,25 @@ impl App {
                 }
                 let changed = snap.changed;
                 self.history.insert(pos, snap);
-                if let Some(sel) = self.selected.as_mut() {
-                    if pos <= *sel {
-                        *sel += 1;
-                    }
+                if let Some(sel) = self.selected.as_mut()
+                    && pos <= *sel
+                {
+                    *sel += 1;
                 }
                 // With precise mode, runs can finish out of order: the newer
                 // neighbour may now turn out to be an unchanged repeat.
                 if self.skip_unchanged
-                    && self.history.get(pos + 1).is_some_and(|n| n.same_result(&self.history[pos]))
+                    && self
+                        .history
+                        .get(pos + 1)
+                        .is_some_and(|n| n.same_result(&self.history[pos]))
                 {
                     let next = self.history.remove(pos + 1);
                     self.history[pos].absorb(&next);
-                    if let Some(sel) = self.selected.as_mut() {
-                        if *sel > pos {
-                            *sel -= 1;
-                        }
+                    if let Some(sel) = self.selected.as_mut()
+                        && *sel > pos
+                    {
+                        *sel -= 1;
                     }
                     if pos + 1 < self.history.len() {
                         let differs = *self.history[pos + 1].output != *self.history[pos].output;
@@ -338,7 +344,10 @@ impl App {
             && (self.history.len() - excess > self.max_history || total > self.max_history_bytes)
         {
             let first = &self.history[excess].output;
-            let shared = self.history.get(excess + 1).is_some_and(|n| Arc::ptr_eq(&n.output, first));
+            let shared = self
+                .history
+                .get(excess + 1)
+                .is_some_and(|n| Arc::ptr_eq(&n.output, first));
             if !shared {
                 total -= first.len();
             }
@@ -368,9 +377,19 @@ impl App {
             width,
         };
         if self.cache.as_ref().map(|(k, _)| k) != Some(&key) {
-            let prev = if self.diff { idx.checked_sub(1).map(|p| &self.history[p]) } else { None };
+            let prev = if self.diff {
+                idx.checked_sub(1).map(|p| &self.history[p])
+            } else {
+                None
+            };
             let matcher = key.query.as_deref().and_then(|q| Matcher::new(q, false));
-            let rows = build_rows(&self.history[idx], prev, matcher.as_ref(), self.wrap, width as usize);
+            let rows = build_rows(
+                &self.history[idx],
+                prev,
+                matcher.as_ref(),
+                self.wrap,
+                width as usize,
+            );
             self.cache = Some((key, rows));
         }
         self.cache.as_ref().map(|(_, r)| r)
@@ -391,7 +410,11 @@ impl App {
     /// Text of history list row `row` (newest first), after the selection marker.
     pub fn history_row_text(&self, row: usize) -> Option<String> {
         let s = &self.history[self.history.len().checked_sub(row + 1)?];
-        let runs = if s.runs > 1 { format!(" ×{}", s.runs) } else { String::new() };
+        let runs = if s.runs > 1 {
+            format!(" ×{}", s.runs)
+        } else {
+            String::new()
+        };
         Some(format!("{}{runs}", s.start.format("%H:%M:%S")))
     }
 
@@ -438,7 +461,9 @@ impl App {
             // Scroll when the help doesn't fit; any other key closes it.
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => self.help_scroll += 1,
-                KeyCode::Char('k') | KeyCode::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1)
+                }
                 KeyCode::PageDown => self.help_scroll += 10,
                 KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(10),
                 KeyCode::Char('g') => self.help_scroll = 0,
@@ -459,9 +484,7 @@ impl App {
         match key.code {
             // Ctrl scrolling first so the plain-letter toggles below don't shadow it.
             KeyCode::Char('d') if ctrl => self.scroll_y += half,
-            KeyCode::Char('u') if ctrl => {
-                self.scroll_y = self.scroll_y.saturating_sub(half)
-            }
+            KeyCode::Char('u') if ctrl => self.scroll_y = self.scroll_y.saturating_sub(half),
             KeyCode::Char('f') if ctrl => self.scroll_y += page,
             KeyCode::Char('b') if ctrl => self.scroll_y = self.scroll_y.saturating_sub(page),
 
@@ -517,7 +540,9 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left => self.scroll_x = self.scroll_x.saturating_sub(4),
             KeyCode::Char('l') | KeyCode::Right => self.scroll_x += 4,
             // Line start / end (clamp_scroll stops at the end of the widest line)
-            KeyCode::Char('H') => self.scroll_x = self.scroll_x.saturating_sub((self.view_width / 2).max(1)),
+            KeyCode::Char('H') => {
+                self.scroll_x = self.scroll_x.saturating_sub((self.view_width / 2).max(1))
+            }
             KeyCode::Char('L') => self.scroll_x += (self.view_width / 2).max(1),
             KeyCode::Home => self.scroll_x = 0,
             KeyCode::End => self.scroll_x = usize::MAX,
@@ -537,10 +562,16 @@ impl App {
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         // ctrl + wheel scrolls faster, as in track and git-graph.
-        let lines = if mouse.modifiers.contains(KeyModifiers::CONTROL) { 15 } else { MOUSE_SCROLL_LINES };
+        let lines = if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+            15
+        } else {
+            MOUSE_SCROLL_LINES
+        };
         if self.show_help {
             match mouse.kind {
-                MouseEventKind::ScrollDown => self.help_scroll = (self.help_scroll + 3).min(self.help_max),
+                MouseEventKind::ScrollDown => {
+                    self.help_scroll = (self.help_scroll + 3).min(self.help_max)
+                }
                 MouseEventKind::ScrollUp => self.help_scroll = self.help_scroll.saturating_sub(3),
                 _ => {}
             }
@@ -554,7 +585,11 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if self.output_area.contains(pos) => {
                 let at = self.content_pos(mouse.column, mouse.row);
-                self.selection = Some(Selection { anchor: at, cursor: at, dragged: false });
+                self.selection = Some(Selection {
+                    anchor: at,
+                    cursor: at,
+                    dragged: false,
+                });
                 self.pinned = self.current().map(|s| s.id);
                 return;
             }
@@ -582,7 +617,11 @@ impl App {
                 self.click_history(mouse.row);
                 self.message = None;
                 if let Some(at) = self.history_pos(mouse.column, mouse.row) {
-                    self.history_selection = Some(Selection { anchor: at, cursor: at, dragged: false });
+                    self.history_selection = Some(Selection {
+                        anchor: at,
+                        cursor: at,
+                        dragged: false,
+                    });
                 }
                 return;
             }
@@ -628,8 +667,12 @@ impl App {
     fn finish_selection(&mut self) {
         let sel = self.selection.take();
         self.pinned = None;
-        let Some(sel) = sel.filter(|s| s.dragged) else { return };
-        let Some(rows) = self.cached_rows() else { return };
+        let Some(sel) = sel.filter(|s| s.dragged) else {
+            return;
+        };
+        let Some(rows) = self.cached_rows() else {
+            return;
+        };
         let text = selected_text(rows, &sel);
         self.copy_text(&text);
     }
@@ -641,7 +684,10 @@ impl App {
         }
         copy_to_clipboard(text);
         let n = text.chars().count();
-        self.message = Some(format!("Copied {n} character{} to the clipboard", if n == 1 { "" } else { "s" }));
+        self.message = Some(format!(
+            "Copied {n} character{} to the clipboard",
+            if n == 1 { "" } else { "s" }
+        ));
     }
 
     /// The history text covered by `sel`, one list row per line.
@@ -659,7 +705,10 @@ impl App {
     /// Maps a terminal cell to (row, column) in the history list text, clamped to
     /// the list; the column skips the 2-cell selection marker.
     fn history_pos(&self, x: u16, y: u16) -> Option<(usize, usize)> {
-        let inner = self.history_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner = self.history_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         if inner.width == 0 || inner.height == 0 || self.history.is_empty() {
             return None;
         }
@@ -671,7 +720,10 @@ impl App {
 
     /// Selects the history row at terminal row `y` (clicks on the border are ignored).
     fn click_history(&mut self, y: u16) {
-        let inner = self.history_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner = self.history_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         if y < inner.y || y >= inner.bottom() {
             return;
         }
@@ -684,7 +736,9 @@ impl App {
 
     /// `delta` > 0 moves to newer snapshots, < 0 to older ones.
     fn move_history(&mut self, delta: isize) {
-        let Some(cur) = self.current_index() else { return };
+        let Some(cur) = self.current_index() else {
+            return;
+        };
         let last = self.history.len() - 1;
         let next = cur.saturating_add_signed(delta).min(last);
         self.selected = Some(next);
@@ -702,7 +756,10 @@ impl App {
         if self.search_open {
             Some(self.editor.text().to_string()).filter(|q| !q.is_empty())
         } else {
-            self.search.as_ref().filter(|_| !self.search_hidden).map(|m| m.pattern.clone())
+            self.search
+                .as_ref()
+                .filter(|_| !self.search_hidden)
+                .map(|m| m.pattern.clone())
         }
     }
 
@@ -718,7 +775,11 @@ impl App {
             }
             KeyCode::Enter => {
                 let text = self.editor.text().to_string();
-                let query = if text.trim().is_empty() { String::new() } else { text };
+                let query = if text.trim().is_empty() {
+                    String::new()
+                } else {
+                    text
+                };
                 push_history(&mut self.search_history, &query);
                 self.search = Matcher::new(&query, false);
                 self.search_hidden = false;
@@ -767,7 +828,9 @@ impl App {
     }
 
     fn do_jump(&mut self, jump: Jump) {
-        let Some((_, rows)) = self.cache.as_ref() else { return };
+        let Some((_, rows)) = self.cache.as_ref() else {
+            return;
+        };
         let matches = &rows.matches;
         let (Some(&first), Some(&last)) = (matches.first(), matches.last()) else {
             if matches!(jump, Jump::From(_, false)) {
@@ -779,23 +842,41 @@ impl App {
         };
         let cur = self.scroll_y;
         let target = match jump {
-            Jump::From(from, _) => matches.iter().copied().find(|&r| r >= from).unwrap_or(first),
-            Jump::Next => matches.iter().copied().find(|&r| r > cur).unwrap_or_else(|| {
-                self.message = Some("Search hit BOTTOM, continuing at TOP".into());
-                first
-            }),
-            Jump::Prev => matches.iter().rev().copied().find(|&r| r < cur).unwrap_or_else(|| {
-                self.message = Some("Search hit TOP, continuing at BOTTOM".into());
-                last
-            }),
+            Jump::From(from, _) => matches
+                .iter()
+                .copied()
+                .find(|&r| r >= from)
+                .unwrap_or(first),
+            Jump::Next => matches
+                .iter()
+                .copied()
+                .find(|&r| r > cur)
+                .unwrap_or_else(|| {
+                    self.message = Some("Search hit BOTTOM, continuing at TOP".into());
+                    first
+                }),
+            Jump::Prev => matches
+                .iter()
+                .rev()
+                .copied()
+                .find(|&r| r < cur)
+                .unwrap_or_else(|| {
+                    self.message = Some("Search hit TOP, continuing at BOTTOM".into());
+                    last
+                }),
         };
         self.scroll_y = target;
     }
 
     /// Position of the match at the top of the view, and how many there are.
     pub fn match_position(&self) -> (Option<usize>, usize) {
-        let Some(rows) = self.cached_rows() else { return (None, 0) };
-        (rows.matches.iter().position(|&r| r == self.scroll_y), rows.matches.len())
+        let Some(rows) = self.cached_rows() else {
+            return (None, 0);
+        };
+        (
+            rows.matches.iter().position(|&r| r == self.scroll_y),
+            rows.matches.len(),
+        )
     }
 
     /// Called after rows are (re)built for the frame: performs a deferred jump
@@ -827,12 +908,14 @@ pub fn build_rows(
 ) -> Rows {
     let lines = styled_chars(&snap.output);
     let prev_lines: Option<Vec<Vec<char>>> = prev.map(|p| {
-        styled_chars(&p.output).into_iter().map(|l| l.into_iter().map(|(c, _)| c).collect()).collect()
+        styled_chars(&p.output)
+            .into_iter()
+            .map(|l| l.into_iter().map(|(c, _)| c).collect())
+            .collect()
     });
 
     let diff_style = Style::default().add_modifier(Modifier::REVERSED);
     let match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-
 
     let mut rows = Vec::new();
     let mut continued = Vec::new();
@@ -893,14 +976,22 @@ pub fn build_rows(
     }
     matches.dedup();
 
-    Rows { lines: rows, matches, max_width, continued }
+    Rows {
+        lines: rows,
+        matches,
+        max_width,
+        continued,
+    }
 }
 
 /// Parses ANSI output into lines of (char, style), expanding tabs and
 /// dropping other control characters.
 fn styled_chars(output: &str) -> Vec<Vec<(char, Style)>> {
     let output = output.strip_suffix('\n').unwrap_or(output);
-    let text: Text = output.as_bytes().into_text().unwrap_or_else(|_| Text::raw(output.to_owned()));
+    let text: Text = output
+        .as_bytes()
+        .into_text()
+        .unwrap_or_else(|_| Text::raw(output.to_owned()));
     text.lines
         .into_iter()
         .map(|line| {
@@ -934,7 +1025,9 @@ pub fn selected_text(rows: &Rows, sel: &Selection) -> String {
     let (start, end) = sel.range();
     let mut out = String::new();
     for r in start.0..=end.0.min(rows.lines.len().saturating_sub(1)) {
-        let Some((from, to)) = sel.columns(r) else { continue };
+        let Some((from, to)) = sel.columns(r) else {
+            continue;
+        };
         if r > start.0 && !rows.continued[r] {
             out.push('\n');
         }
@@ -979,7 +1072,11 @@ fn base64(data: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
         for i in 0..4 {
             if i <= chunk.len() {
@@ -1017,7 +1114,16 @@ mod tests {
     use chrono::Local;
 
     fn snap(id: usize, output: &str) -> Snapshot {
-        Snapshot { id, start: Local::now(), duration: Duration::ZERO, output: output.into(), code: Some(0), changed: false, runs: 1, last_seen: Local::now() }
+        Snapshot {
+            id,
+            start: Local::now(),
+            duration: Duration::ZERO,
+            output: output.into(),
+            code: Some(0),
+            changed: false,
+            runs: 1,
+            last_seen: Local::now(),
+        }
     }
 
     fn text(line: &Line) -> String {
@@ -1039,7 +1145,11 @@ mod tests {
         // "0123456789" wraps into 3 rows at width 4, then "abc".
         let rows = build_rows(&snap(1, "0123456789\nabc\nxyz"), None, None, true, 4);
         assert_eq!(rows.continued, vec![false, true, true, false, false]);
-        let sel = |a, c| Selection { anchor: a, cursor: c, dragged: true };
+        let sel = |a, c| Selection {
+            anchor: a,
+            cursor: c,
+            dragged: true,
+        };
         // Both ends are inclusive.
         assert_eq!(selected_text(&rows, &sel((0, 2), (2, 0))), "2345678");
         assert_eq!(selected_text(&rows, &sel((3, 1), (1, 3))), "789\nab");
@@ -1051,9 +1161,18 @@ mod tests {
     #[test]
     fn line_change_finds_first_and_count() {
         assert_eq!(line_change("a\nb\nc", "a\nb\nc"), None);
-        assert_eq!(line_change("a\nb\nc", "a\nX\nc"), Some(Change { first: 2, lines: 1 }));
-        assert_eq!(line_change("a\nb", "a\nX\nY\nZ"), Some(Change { first: 2, lines: 3 }));
-        assert_eq!(line_change("a\nb\nc", "a"), Some(Change { first: 2, lines: 2 }));
+        assert_eq!(
+            line_change("a\nb\nc", "a\nX\nc"),
+            Some(Change { first: 2, lines: 1 })
+        );
+        assert_eq!(
+            line_change("a\nb", "a\nX\nY\nZ"),
+            Some(Change { first: 2, lines: 3 })
+        );
+        assert_eq!(
+            line_change("a\nb\nc", "a"),
+            Some(Change { first: 2, lines: 2 })
+        );
     }
 
     #[test]
@@ -1067,22 +1186,53 @@ mod tests {
 
     #[test]
     fn highlights_differences() {
-        let rows = build_rows(&snap(2, "abc\nxyz"), Some(&snap(1, "abd\nxyz")), None, true, 80);
+        let rows = build_rows(
+            &snap(2, "abc\nxyz"),
+            Some(&snap(1, "abd\nxyz")),
+            None,
+            true,
+            80,
+        );
         let first = &rows.lines[0];
         assert_eq!(text(first), "abc");
-        assert!(!first.spans[0].style.add_modifier.contains(Modifier::REVERSED));
-        assert!(first.spans.last().unwrap().style.add_modifier.contains(Modifier::REVERSED));
+        assert!(
+            !first.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            first
+                .spans
+                .last()
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
         assert_eq!(rows.lines[1].spans.len(), 1);
     }
 
     #[test]
     fn search_smart_case_and_ansi() {
         let out = "\x1b[31mError\x1b[0m one\nfine\nerror two";
-        let rows = build_rows(&snap(1, out), None, Matcher::new("error", false).as_ref(), true, 80);
+        let rows = build_rows(
+            &snap(1, out),
+            None,
+            Matcher::new("error", false).as_ref(),
+            true,
+            80,
+        );
         assert_eq!(text(&rows.lines[0]), "Error one");
         assert_eq!(rows.lines[0].spans[0].style.fg, Some(Color::Black)); // match overrides red
         assert_eq!(rows.matches, vec![0, 2]);
-        let rows = build_rows(&snap(1, out), None, Matcher::new("Error", false).as_ref(), true, 80);
+        let rows = build_rows(
+            &snap(1, out),
+            None,
+            Matcher::new("Error", false).as_ref(),
+            true,
+            80,
+        );
         assert_eq!(rows.matches, vec![0]);
     }
 }
@@ -1090,8 +1240,8 @@ mod tests {
 #[cfg(test)]
 mod history_tests {
     use super::*;
-    use clap::Parser;
     use chrono::Local;
+    use clap::Parser;
 
     fn app(extra: &[&str]) -> App {
         // A huge interval: the runner's single run finishes into a dropped channel.
@@ -1124,7 +1274,14 @@ mod history_tests {
     #[test]
     fn merges_unchanged_runs() {
         let mut a = app(&[]);
-        for (id, out, code) in [(1, "a", 0), (2, "a", 0), (3, "b", 0), (4, "b", 0), (5, "b", 1), (6, "a", 0)] {
+        for (id, out, code) in [
+            (1, "a", 0),
+            (2, "a", 0),
+            (3, "b", 0),
+            (4, "b", 0),
+            (5, "b", 1),
+            (6, "a", 0),
+        ] {
             done(&mut a, id, out, code);
         }
         // Same output but a different exit status still counts as a change.
