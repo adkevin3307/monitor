@@ -445,9 +445,10 @@ impl App {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
-        if ctrl && key.code == KeyCode::Char('c') {
+        // ctrl-c cancels the search box (like esc) and quits anywhere else,
+        // as in track and git-graph.
+        if ctrl && key.code == KeyCode::Char('c') && !self.search_open {
             self.exit = Some(ExitReason::User);
             return;
         }
@@ -511,8 +512,6 @@ impl App {
             }
             KeyCode::Char('J') => self.move_history(-1),
             KeyCode::Char('K') => self.move_history(1),
-            KeyCode::Down if shift => self.move_history(-1),
-            KeyCode::Up if shift => self.move_history(1),
             KeyCode::Char('<') => self.jump_history(0),
             KeyCode::Char('>') => self.jump_history(usize::MAX),
 
@@ -528,7 +527,7 @@ impl App {
                 self.message = Some(format!("Bell {}", if self.bell { "on" } else { "off" }));
             }
             KeyCode::Char('t') => self.show_title = !self.show_title,
-            KeyCode::Char('w') | KeyCode::Char('u') => self.wrap = !self.wrap,
+            KeyCode::Char('w') => self.wrap = !self.wrap,
 
             // scrolling
             KeyCode::Char('j') | KeyCode::Down => self.scroll_y += 1,
@@ -767,6 +766,11 @@ impl App {
     fn on_search_key(&mut self, key: KeyEvent, ctrl: bool) {
         let before = self.editor.text().to_string();
         match key.code {
+            KeyCode::Char('c') if ctrl => {
+                self.search_open = false;
+                self.scroll_y = self.search_origin;
+                return;
+            }
             KeyCode::Esc => {
                 // Cancel: back to where the search started, with the old search.
                 self.search_open = false;

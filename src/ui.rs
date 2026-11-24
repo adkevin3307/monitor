@@ -322,7 +322,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     let hscroll = u16::try_from(app.scroll_x).unwrap_or(u16::MAX);
     f.render_widget(Paragraph::new(visible).scroll((0, hscroll)), inner);
 
-    draw_scroll(f, area, app.scroll_y, height, total, app.scroll_y + 1, end);
+    draw_scroll(f, area, !app.time_machine(), app.scroll_y, height, total);
 }
 
 /// The style of selected text. Reverse video (used for differences) is dropped,
@@ -459,21 +459,21 @@ fn footer_hints(keys: &[(&str, &str)], width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
-/// A scrollbar on the right border of a panel and the visible range (`first`-`last`
-/// of `total`, 1-based) on its bottom border, the same in track, monitor and
-/// git-graph. Nothing is drawn when everything fits.
+/// A scrollbar on the right border of a panel, the same in track, monitor and
+/// git-graph. It takes the border's color (cyan when the panel is focused) and
+/// is drawn only when the content doesn't fit.
 fn draw_scroll(
     f: &mut Frame,
     panel: Rect,
+    focused: bool,
     offset: usize,
     visible: usize,
     total: usize,
-    first: usize,
-    last: usize,
 ) {
     if total <= visible || panel.height < 3 {
         return;
     }
+    let style = Style::new().fg(if focused { ACCENT } else { DIM });
     let mut state = ScrollbarState::new(total - visible)
         .position(offset)
         .viewport_content_length(visible);
@@ -481,26 +481,13 @@ fn draw_scroll(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
-            .thumb_style(Style::new().fg(ACCENT))
-            .track_style(Style::new().fg(DIM)),
+            .thumb_style(style)
+            .track_style(style),
         panel.inner(Margin {
             vertical: 1,
             horizontal: 0,
         }),
         &mut state,
-    );
-    let range = Line::styled(format!(" {first}-{last}/{total} "), Style::new().fg(DIM));
-    let bottom = Rect {
-        y: panel.bottom() - 1,
-        height: 1,
-        ..panel
-    };
-    f.render_widget(
-        range.right_aligned(),
-        bottom.inner(Margin {
-            vertical: 0,
-            horizontal: 1,
-        }),
     );
 }
 
@@ -514,7 +501,6 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 ("/", "search"),
                 ("n/N", "next/prev"),
                 ("J/K", "older/newer"),
-                ("</>", "oldest/newest"),
                 ("esc", "live"),
                 ("?", "help"),
                 ("q", "quit"),
@@ -529,7 +515,6 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 ("n/N", "next/prev"),
                 ("space", "time machine"),
                 ("s", if app.suspended { "resume" } else { "suspend" }),
-                ("d", "diff"),
                 ("?", "help"),
                 ("q", "quit"),
             ],
@@ -562,8 +547,7 @@ fn draw_help(f: &mut Frame, app: &mut App) {
             "space",
             "toggle time machine (pause the view, show history)",
         ),
-        ("J / shift-↓", "older result"),
-        ("K / shift-↑", "newer result"),
+        ("J / K", "older / newer result"),
         ("< / >", "oldest / newest result"),
         ("esc", "back to the live view"),
         ("Output", ""),
