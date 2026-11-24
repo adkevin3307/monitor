@@ -13,6 +13,8 @@ use ratatui::text::{Line, Span, Text};
 use unicode_width::UnicodeWidthChar;
 
 use crate::cli::Cli;
+use crate::input::{LineEditor, push_history};
+use crate::matcher::Matcher;
 use crate::runner::{Msg, Runner, Snapshot};
 
 const TAB_WIDTH: usize = 8;
@@ -114,10 +116,19 @@ pub struct App {
     /// so new output can't shift the text under the mouse.
     pinned: Option<usize>,
 
-    pub query: Option<String>,
-    pub search_input: Option<String>,
+    /// The active search; `search_hidden` hides its highlights (esc, like vim's
+    /// :noh) until n / N.
+    pub search: Option<Matcher>,
+    pub search_hidden: bool,
+    /// The search box is open (`/`); `editor` holds what is typed.
+    pub search_open: bool,
+    pub editor: LineEditor,
+    search_history: Vec<String>,
+    /// Scroll position when the search box opened, restored on cancel.
+    search_origin: usize,
     pub message: Option<String>,
-    pending_jump: bool,
+    /// A jump to a search match, done once the rows for the frame are built.
+    pending_jump: Option<Jump>,
 
     pub exit: Option<ExitReason>,
     cache: Option<(RowsKey, Rows)>,
@@ -183,10 +194,14 @@ impl App {
             selection: None,
             history_selection: None,
             pinned: None,
-            query: None,
-            search_input: None,
+            search: None,
+            search_hidden: false,
+            search_open: false,
+            editor: LineEditor::default(),
+            search_history: Vec::new(),
+            search_origin: 0,
             message: None,
-            pending_jump: false,
+            pending_jump: None,
             exit: None,
             cache: None,
             change_cache: None,
@@ -343,19 +358,14 @@ impl App {
             id: self.history[idx].id,
             prev: idx.checked_sub(1).map(|p| self.history[p].id),
             diff: self.diff,
-            query: self.query.clone(),
+            query: self.highlight_query(),
             wrap: self.wrap,
             width,
         };
         if self.cache.as_ref().map(|(k, _)| k) != Some(&key) {
             let prev = if self.diff { idx.checked_sub(1).map(|p| &self.history[p]) } else { None };
-            let rows = build_rows(
-                &self.history[idx],
-                prev,
-                self.query.as_deref(),
-                self.wrap,
-                width as usize,
-            );
+            let matcher = key.query.as_deref().and_then(|q| Matcher::new(q, false));
+            let rows = build_rows(&self.history[idx], prev, matcher.as_ref(), self.wrap, width as usize);
             self.cache = Some((key, rows));
         }
         self.cache.as_ref().map(|(_, r)| r)
@@ -414,25 +424,8 @@ impl App {
             return;
         }
 
-        if let Some(input) = self.search_input.as_mut() {
-            match key.code {
-                KeyCode::Esc => self.search_input = None,
-                KeyCode::Enter => {
-                    let q = self.search_input.take().unwrap_or_default();
-                    self.query = if q.is_empty() { None } else { Some(q) };
-                    // Search from the top of the current view on the next frame.
-                    self.scroll_y = self.scroll_y.saturating_sub(1);
-                    self.pending_jump = true;
-                }
-                KeyCode::Backspace => {
-                    if input.pop().is_none() {
-                        self.search_input = None;
-                    }
-                }
-                KeyCode::Char('u') if ctrl => input.clear(),
-                KeyCode::Char(c) if !ctrl => input.push(c),
-                _ => {}
-            }
+        if self.search_open {
+            self.on_search_key(key, ctrl);
             return;
         }
 
@@ -459,8 +452,9 @@ impl App {
 
             KeyCode::Char('q') => self.exit = Some(ExitReason::User),
             KeyCode::Esc => {
-                if self.query.is_some() {
-                    self.query = None;
+                // First hide the search highlights (n / N show them again).
+                if self.search.is_some() && !self.search_hidden {
+                    self.search_hidden = true;
                 } else if self.time_machine() {
                     self.selected = None;
                 }
@@ -511,16 +505,20 @@ impl App {
             KeyCode::End => self.scroll_x = usize::MAX,
 
             // search
-            KeyCode::Char('/') => self.search_input = Some(String::new()),
-            KeyCode::Char('n') => self.jump_match(true),
-            KeyCode::Char('N') => self.jump_match(false),
+            KeyCode::Char('/') => {
+                self.search_open = true;
+                self.editor.clear();
+                self.search_origin = self.scroll_y;
+            }
+            KeyCode::Char('n') => self.request_jump(Jump::Next),
+            KeyCode::Char('N') => self.request_jump(Jump::Prev),
             _ => {}
         }
         self.clamp_scroll();
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.show_help || self.search_input.is_some() {
+        if self.show_help || self.search_open {
             return;
         }
         let pos = Position::new(mouse.column, mouse.row);
@@ -670,32 +668,124 @@ impl App {
         }
     }
 
-    fn jump_match(&mut self, forward: bool) {
-        let Some((_, rows)) = self.cache.as_ref() else { return };
-        if self.query.is_none() {
-            return;
-        }
-        if rows.matches.is_empty() {
-            self.message = Some("pattern not found".into());
-            return;
-        }
-        let cur = self.scroll_y;
-        let target = if forward {
-            rows.matches.iter().copied().find(|&r| r > cur).unwrap_or(rows.matches[0])
+    /// The pattern to highlight: what is being typed in the search box, or the
+    /// active search unless its highlights are hidden.
+    fn highlight_query(&self) -> Option<String> {
+        if self.search_open {
+            Some(self.editor.text().to_string()).filter(|q| !q.is_empty())
         } else {
-            rows.matches.iter().rev().copied().find(|&r| r < cur).unwrap_or(*rows.matches.last().unwrap())
+            self.search.as_ref().filter(|_| !self.search_hidden).map(|m| m.pattern.clone())
+        }
+    }
+
+    /// Keys while the search box is open.
+    fn on_search_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let before = self.editor.text().to_string();
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel: back to where the search started, with the old search.
+                self.search_open = false;
+                self.scroll_y = self.search_origin;
+                return;
+            }
+            KeyCode::Enter => {
+                let text = self.editor.text().to_string();
+                let query = if text.trim().is_empty() { String::new() } else { text };
+                push_history(&mut self.search_history, &query);
+                self.search = Matcher::new(&query, false);
+                self.search_hidden = false;
+                self.search_open = false;
+                self.scroll_y = self.search_origin;
+                if self.search.is_some() {
+                    self.pending_jump = Some(Jump::From(self.search_origin, true));
+                }
+                return;
+            }
+            KeyCode::Backspace if self.editor.text().is_empty() => {
+                self.search_open = false;
+                self.scroll_y = self.search_origin;
+                return;
+            }
+            KeyCode::Backspace => self.editor.backspace(),
+            KeyCode::Delete => self.editor.delete(),
+            KeyCode::Left => self.editor.left(),
+            KeyCode::Right => self.editor.right(),
+            KeyCode::Home => self.editor.home(),
+            KeyCode::End => self.editor.end(),
+            KeyCode::Char('a') if ctrl => self.editor.home(),
+            KeyCode::Char('e') if ctrl => self.editor.end(),
+            KeyCode::Char('u') if ctrl => self.editor.kill_to_start(),
+            KeyCode::Char('w') if ctrl => self.editor.delete_word(),
+            KeyCode::Up => self.editor.history_prev(&self.search_history),
+            KeyCode::Down => self.editor.history_next(&self.search_history),
+            KeyCode::Char(c) if !ctrl => self.editor.insert(c),
+            _ => {}
+        }
+        // Search while typing: jump to the first match from where it started.
+        if self.editor.text() != before {
+            self.scroll_y = self.search_origin;
+            self.pending_jump = Some(Jump::From(self.search_origin, false));
+        }
+    }
+
+    /// n / N: shows hidden highlights and jumps once the rows are rebuilt.
+    fn request_jump(&mut self, jump: Jump) {
+        if self.search.is_none() {
+            self.message = Some("no search (press /)".into());
+            return;
+        }
+        self.search_hidden = false;
+        self.pending_jump = Some(jump);
+    }
+
+    fn do_jump(&mut self, jump: Jump) {
+        let Some((_, rows)) = self.cache.as_ref() else { return };
+        let matches = &rows.matches;
+        let (Some(&first), Some(&last)) = (matches.first(), matches.last()) else {
+            if matches!(jump, Jump::From(_, false)) {
+                return;
+            }
+            let label = self.search.as_ref().map(Matcher::label).unwrap_or_default();
+            self.message = Some(format!("pattern not found: {label}"));
+            return;
+        };
+        let cur = self.scroll_y;
+        let target = match jump {
+            Jump::From(from, _) => matches.iter().copied().find(|&r| r >= from).unwrap_or(first),
+            Jump::Next => matches.iter().copied().find(|&r| r > cur).unwrap_or_else(|| {
+                self.message = Some("search hit BOTTOM, continuing at TOP".into());
+                first
+            }),
+            Jump::Prev => matches.iter().rev().copied().find(|&r| r < cur).unwrap_or_else(|| {
+                self.message = Some("search hit TOP, continuing at BOTTOM".into());
+                last
+            }),
         };
         self.scroll_y = target;
     }
 
+    /// Position of the match at the top of the view, and how many there are.
+    pub fn match_position(&self) -> (Option<usize>, usize) {
+        let Some(rows) = self.cached_rows() else { return (None, 0) };
+        (rows.matches.iter().position(|&r| r == self.scroll_y), rows.matches.len())
+    }
+
     /// Called after rows are (re)built for the frame: performs a deferred jump
-    /// to the first search match once the match positions are known.
+    /// to a search match once the match positions are known.
     pub fn after_layout(&mut self) {
-        if std::mem::take(&mut self.pending_jump) {
-            self.jump_match(true);
+        if let Some(jump) = self.pending_jump.take() {
+            self.do_jump(jump);
         }
         self.clamp_scroll();
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Jump {
+    /// The first match at or after a row (wrapping); `true` reports "not found".
+    From(usize, bool),
+    Next,
+    Prev,
 }
 
 /// Turns a snapshot into display rows: parses ANSI colors, expands tabs,
@@ -703,7 +793,7 @@ impl App {
 pub fn build_rows(
     snap: &Snapshot,
     prev: Option<&Snapshot>,
-    query: Option<&str>,
+    search: Option<&Matcher>,
     wrap: bool,
     width: usize,
 ) -> Rows {
@@ -715,12 +805,6 @@ pub fn build_rows(
     let diff_style = Style::default().add_modifier(Modifier::REVERSED);
     let match_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
-    // Smart case: case-insensitive unless the query contains uppercase.
-    let query: Option<(Vec<char>, bool)> = query.filter(|q| !q.is_empty()).map(|q| {
-        let sensitive = q.chars().any(char::is_uppercase);
-        let chars = if sensitive { q.chars().collect() } else { q.to_lowercase().chars().collect() };
-        (chars, sensitive)
-    });
 
     let mut rows = Vec::new();
     let mut continued = Vec::new();
@@ -740,22 +824,16 @@ pub fn build_rows(
         }
 
         let mut match_starts = Vec::new();
-        if let Some((q, sensitive)) = &query {
-            let hay: Vec<char> = if *sensitive {
-                line.iter().map(|(c, _)| *c).collect()
-            } else {
-                line.iter().map(|(c, _)| c.to_lowercase().next().unwrap_or(*c)).collect()
-            };
-            let mut j = 0;
-            while j + q.len() <= hay.len() {
-                if hay[j..j + q.len()] == q[..] {
-                    match_starts.push(j);
-                    for k in j..j + q.len() {
-                        line[k].1 = line[k].1.patch(match_style);
-                    }
-                    j += q.len();
-                } else {
-                    j += 1;
+        if let Some(search) = search {
+            // Regex byte ranges mapped back to character indices.
+            let hay: String = line.iter().map(|(c, _)| *c).collect();
+            let char_at: Vec<usize> = hay.char_indices().map(|(b, _)| b).collect();
+            let index = |byte: usize| char_at.partition_point(|&b| b < byte);
+            for range in search.find_ranges(&hay) {
+                let (start, end) = (index(range.start), index(range.end));
+                match_starts.push(start);
+                for cell in &mut line[start..end] {
+                    cell.1 = cell.1.patch(match_style);
                 }
             }
         }
@@ -972,11 +1050,11 @@ mod tests {
     #[test]
     fn search_smart_case_and_ansi() {
         let out = "\x1b[31mError\x1b[0m one\nfine\nerror two";
-        let rows = build_rows(&snap(1, out), None, Some("error"), true, 80);
+        let rows = build_rows(&snap(1, out), None, Matcher::new("error", false).as_ref(), true, 80);
         assert_eq!(text(&rows.lines[0]), "Error one");
         assert_eq!(rows.lines[0].spans[0].style.fg, Some(Color::Black)); // match overrides red
         assert_eq!(rows.matches, vec![0, 2]);
-        let rows = build_rows(&snap(1, out), None, Some("Error"), true, 80);
+        let rows = build_rows(&snap(1, out), None, Matcher::new("Error", false).as_ref(), true, 80);
         assert_eq!(rows.matches, vec![0]);
     }
 }

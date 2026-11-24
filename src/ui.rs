@@ -53,10 +53,100 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
         draw_history(f, app, history);
     }
     draw_footer(f, app, footer);
+    if app.search_open {
+        draw_search(f, app);
+    }
     if app.show_help {
         draw_help(f);
     }
 }
+
+/// The search box, the same as in track and git-graph.
+fn draw_search(f: &mut Frame, app: &App) {
+    let info = (!app.editor.text().is_empty()).then(|| match app.match_position().1 {
+        0 => Span::styled("no match", Style::new().fg(RED)),
+        1 => Span::styled("1 match", Style::new().fg(DIM)),
+        n => Span::styled(format!("{n} matches"), Style::new().fg(DIM)),
+    });
+    draw_input(
+        f,
+        "Search",
+        "\u{f002}",
+        app.editor.text(),
+        app.editor.cursor(),
+        info,
+        &[("enter", "search"), ("↑/↓", "history"), ("esc", "cancel")],
+    );
+}
+
+/// A one-line input box: rounded border, centered title, icon, block cursor,
+/// optional info on the right and key hints in the bottom border.
+fn draw_input(
+    f: &mut Frame,
+    title: &str,
+    icon: &str,
+    text: &str,
+    cursor: usize,
+    info: Option<Span<'static>>,
+    hints: &[(&str, &str)],
+) {
+    let full = f.area();
+    let width = full.width.saturating_sub(4).min(60);
+    if width < 10 || full.height < 3 {
+        return;
+    }
+    let area = Rect {
+        x: full.x + (full.width - width) / 2,
+        y: full.y + 2.min(full.height - 3),
+        width,
+        height: 3,
+    };
+    let mut hint_spans = vec![Span::raw(" ")];
+    for (i, (k, v)) in hints.iter().enumerate() {
+        if i > 0 {
+            hint_spans.push(Span::styled(" · ", Style::new().fg(DIM)));
+        }
+        hint_spans.push(Span::styled(k.to_string(), Style::new().fg(ACCENT)));
+        hint_spans.push(Span::styled(format!(" {v}"), Style::new().fg(DIM)));
+    }
+    hint_spans.push(Span::raw(" "));
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(Line::styled(format!(" {title} "), Style::new().fg(ACCENT)).centered())
+        .title_bottom(Line::from(hint_spans).centered());
+    let inner = block.inner(area);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let info_width = info.as_ref().map_or(0, |s| s.width() as u16 + 1);
+    let [input, info_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(info_width)]).areas(inner);
+    // Keep the cursor in view: drop characters from the start of long input
+    let room = (input.width as usize).saturating_sub(4);
+    let (mut before, after) = text.split_at(cursor);
+    while Line::raw(before).width() > room {
+        let mut chars = before.chars();
+        chars.next();
+        before = chars.as_str();
+    }
+    let mut after_chars = after.chars();
+    let spans = vec![
+        Span::styled(format!(" {icon} "), Style::new().fg(ACCENT)),
+        Span::raw(before.to_string()),
+        match after_chars.next() {
+            Some(c) => Span::styled(c.to_string(), Style::new().reversed()),
+            None => Span::styled("█", Style::new().fg(ACCENT)),
+        },
+        Span::raw(after_chars.as_str().to_string()),
+    ];
+    f.render_widget(Line::from(spans), input);
+    if let Some(info) = info {
+        f.render_widget(Line::from(info).right_aligned(), info_area);
+    }
+}
+
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
     let mut spans = vec![
@@ -104,11 +194,35 @@ fn mode_line(app: &App) -> Line<'static> {
     if app.suspended {
         spans.push(Span::styled(" · suspended", Style::new().fg(YELLOW)));
     }
+    // The search and the current match; dimmed while its highlights are hidden.
+    if let (Some(search), false) = (&app.search, app.search_open) {
+        let count = match app.match_position() {
+            _ if app.search_hidden => "hidden".to_string(),
+            (_, 0) => "no match".to_string(),
+            (Some(i), n) => format!("{}/{n}", i + 1),
+            (None, 1) => "1 match".to_string(),
+            (None, n) => format!("{n} matches"),
+        };
+        let style = if app.search_hidden { DIM } else { YELLOW };
+        spans.insert(0, Span::styled(format!(" /{}", search.label()), Style::new().fg(style)));
+        spans.insert(1, Span::styled(format!("  {count} "), Style::new().fg(DIM)));
+    }
     spans.push(Span::raw(" "));
     Line::from(spans).alignment(Alignment::Right)
 }
 
 fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
+    // Lay out the rows (and do pending search jumps) first, so the title's
+    // match count describes this frame.
+    let inner = area.inner(Margin { vertical: 1, horizontal: 1 });
+    app.view_height = inner.height as usize;
+    app.view_width = inner.width as usize;
+    app.output_area = inner;
+    let has_rows = app.rows(inner.width).is_some();
+    if has_rows {
+        app.after_layout();
+    }
+
     let change = app.change();
     let title = match app.current() {
         Some(s) => {
@@ -148,13 +262,9 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
         None => Line::raw(" Output "),
     };
     let block = panel(title, !app.time_machine()).title(mode_line(app));
-    let inner = block.inner(area);
     f.render_widget(block, area);
-    app.view_height = inner.height as usize;
-    app.view_width = inner.width as usize;
-    app.output_area = inner;
 
-    if app.rows(inner.width).is_none() {
+    if !has_rows {
         let msg = if app.running.is_empty() { "No output yet" } else { "Waiting for first run…" };
         f.render_widget(
             Paragraph::new(msg).style(Style::new().fg(DIM)).alignment(Alignment::Center),
@@ -162,7 +272,6 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     }
-    app.after_layout();
 
     let rows = app.cached_rows().expect("rows built above");
     let total = rows.lines.len();
@@ -305,14 +414,7 @@ fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    let left = if let Some(input) = &app.search_input {
-        Line::from(vec![
-            Span::styled(" / ", Style::new().fg(ACCENT)),
-            Span::raw(input.clone()),
-            Span::styled("█", Style::new().fg(ACCENT)),
-            Span::styled("   enter search  esc cancel", Style::new().fg(DIM)),
-        ])
-    } else if let Some(msg) = &app.message {
+    let left = if let Some(msg) = &app.message {
         Line::styled(format!(" {msg}"), Style::new().fg(Color::Yellow))
     } else if app.time_machine() {
         Line::from(key_hints(&[
@@ -338,10 +440,6 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("{name} "), Style::new().fg(if on { ACCENT } else { DIM }))
     };
     let mut right = vec![];
-    if let Some(q) = &app.query {
-        let count = app.cached_rows().map(|r| r.matches.len()).unwrap_or(0);
-        right.push(Span::styled(format!("  /{q} [{count}]  "), Style::new().fg(Color::Yellow)));
-    }
     right.extend([toggle("diff", app.diff), toggle("bell", app.bell), toggle("wrap", app.wrap)]);
     let right = Line::from(right);
     let rw = right.width() as u16;
@@ -383,9 +481,9 @@ fn draw_help(f: &mut Frame) {
         ("home/end", "line start / end (when not wrapping)"),
         ("d / b / w / t", "toggle diff / bell / wrap / title"),
         ("Search", ""),
-        ("/", "search (smart case)"),
-        ("n / N", "next / previous match"),
-        ("esc", "clear the search"),
+        ("/", "search: regex, smart case; jumps while typing"),
+        ("n / N", "next / previous match; shows hidden highlights"),
+        ("esc", "hide search highlights (then: back to live)"),
     ];
     let lines: Vec<Line> = rows
         .iter()

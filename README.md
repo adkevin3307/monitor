@@ -7,7 +7,7 @@ It runs a command over and over and shows its output full-screen, and adds:
   A new result is recorded only when the output or exit status changes.
 - **Diff highlighting**: shows which characters changed since the previous run (`-d` / `d`).
 - **ANSI colors**: keeps the colors from the command's output.
-- **Scrolling and search**: vim-style keys, smart-case `/` search, and `n`/`N` to jump between matches.
+- **Scrolling and search**: vim-style keys, and `/` regex search (smart case) in a small input box that jumps to matches while you type; `n`/`N` step through them and `Esc` hides the highlights. See [Shared search](#shared-search).
 - **Suspend / run now**: `s` pauses running the command, `r` runs it right away.
 - **Precise mode** (`-p`): starts a run every interval, even if the previous one is still going.
 - **watch-style exits**: `-e` exits on a non-zero status, `-g` exits when the output changes.
@@ -59,7 +59,7 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `space` | toggle time machine |
 | `J` / `K`, `Shift-↓` / `Shift-↑` | older / newer result |
 | `<` / `>` | oldest / newest result |
-| `Esc` | clear search, or go back to the live view |
+| `Esc` | hide the search highlights, or go back to the live view |
 | `s` / `r` | suspend or resume / run now |
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `Ctrl-F/B` | scroll a line / half a page / a page |
 | `g` / `G` | top / bottom |
@@ -70,7 +70,7 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `h` `l` `←` `→` | scroll sideways 4 columns (when lines aren't wrapped) |
 | `H` / `L` | scroll sideways half a page |
 | `Home` / `End` | line start / end (when lines aren't wrapped) |
-| `/`, `n` / `N` | search, next / previous match |
+| `/`, `n` / `N` | search (regex, smart case), next / previous match (`n` / `N` also show hidden highlights) |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
 While in time-machine mode, a history panel lists results newest first, by the
@@ -100,7 +100,7 @@ keys do the same thing in all three:
 | `H`/`L` | Sideways half a page |
 | `home` / `end` | Line start / end (not top / bottom) |
 | `/`, `n` / `N` | Search, next / previous match |
-| `esc` | Clear the search, or go back |
+| `esc` | Hide the search highlights, then go back |
 | `?` | Help (any key closes it; `j`/`k` scroll it when it doesn't fit) |
 | `q`, `ctrl-c` | Quit |
 | mouse wheel | Scroll |
@@ -110,6 +110,32 @@ keys do the same thing in all three:
 Other keys are specific to one tool. Where a view doesn't scroll sideways,
 `h`/`l`/`H`/`L` may do something else there (in `git-graph`'s commit list
 they move between panes and jump to HEAD).
+
+## Shared search
+
+`/` opens the same small input box near the top of the screen in all three
+(in the style of snacks.nvim's input):
+
+```
+          ╭───────────────────── Search ─────────────────────╮
+          │  error█                               12 matches │
+          ╰──── enter search · ↑/↓ history · esc cancel ─────╯
+```
+
+- Patterns are regular expressions with smart case (case-insensitive unless
+  the pattern has an uppercase letter); an invalid regex is matched literally.
+- While you type, matches are highlighted, the view jumps to the first match
+  from where you started, and the box shows how many there are.
+- `enter` keeps the search; `esc` cancels it and goes back to where you were;
+  an empty search clears it.
+- Editing: `←`/`→`, `home`/`end`, `ctrl-a`/`ctrl-e` move the cursor,
+  `ctrl-u`/`ctrl-w` delete to the start / the previous word, `↑`/`↓` browse
+  earlier searches, and `backspace` on an empty box closes it.
+- The main panel's title shows the search and the current match, e.g.
+  `/error  3/12`.
+- Matches are highlighted in black on yellow. `esc` hides the highlights but
+  keeps the search (the title then says `hidden`), like vim's `:noh`; `n` / `N`
+  show them again and jump to the next / previous match.
 
 ## Memory
 

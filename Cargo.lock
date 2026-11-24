@@ -833,6 +833,7 @@ dependencies = [
  "humantime",
  "libc",
  "ratatui",
+ "regex",
  "unicode-width",
 ]
 
