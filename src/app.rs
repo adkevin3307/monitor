@@ -121,6 +121,34 @@ pub struct App {
 
     pub exit: Option<ExitReason>,
     cache: Option<(RowsKey, Rows)>,
+    /// What changed from the previous snapshot, keyed by (snapshot id, previous id).
+    change_cache: Option<((usize, usize), Option<Change>)>,
+}
+
+/// Lines that differ from the previous snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    /// First differing line (1-based).
+    pub first: usize,
+    pub lines: usize,
+}
+
+/// Compares two outputs line by line.
+pub fn line_change(prev: &str, cur: &str) -> Option<Change> {
+    let (mut a, mut b) = (prev.lines(), cur.lines());
+    let mut first = None;
+    let mut lines = 0;
+    for i in 1.. {
+        match (a.next(), b.next()) {
+            (None, None) => break,
+            (x, y) if x == y => {}
+            _ => {
+                first.get_or_insert(i);
+                lines += 1;
+            }
+        }
+    }
+    first.map(|first| Change { first, lines })
 }
 
 impl App {
@@ -161,6 +189,7 @@ impl App {
             pending_jump: false,
             exit: None,
             cache: None,
+            change_cache: None,
         }
     }
 
@@ -330,6 +359,18 @@ impl App {
             self.cache = Some((key, rows));
         }
         self.cache.as_ref().map(|(_, r)| r)
+    }
+
+    /// What the shown snapshot changed from the one before it (cached).
+    pub fn change(&mut self) -> Option<Change> {
+        let idx = self.current_index()?;
+        let prev = idx.checked_sub(1)?;
+        let key = (self.history[idx].id, self.history[prev].id);
+        if self.change_cache.as_ref().map(|(k, _)| k) != Some(&key) {
+            let change = line_change(&self.history[prev].output, &self.history[idx].output);
+            self.change_cache = Some((key, change));
+        }
+        self.change_cache.as_ref().and_then(|(_, c)| *c)
     }
 
     /// Text of history list row `row` (newest first), after the selection marker.
@@ -897,6 +938,14 @@ mod tests {
         assert_eq!(selected_text(&rows, &sel((2, 1), (4, 0))), "9\nabc\nx");
         // Dragging backwards gives the same text.
         assert_eq!(selected_text(&rows, &sel((4, 0), (2, 1))), "9\nabc\nx");
+    }
+
+    #[test]
+    fn line_change_finds_first_and_count() {
+        assert_eq!(line_change("a\nb\nc", "a\nb\nc"), None);
+        assert_eq!(line_change("a\nb\nc", "a\nX\nc"), Some(Change { first: 2, lines: 1 }));
+        assert_eq!(line_change("a\nb", "a\nX\nY\nZ"), Some(Change { first: 2, lines: 3 }));
+        assert_eq!(line_change("a\nb\nc", "a"), Some(Change { first: 2, lines: 2 }));
     }
 
     #[test]

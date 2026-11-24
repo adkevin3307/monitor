@@ -109,6 +109,7 @@ fn mode_line(app: &App) -> Line<'static> {
 }
 
 fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
+    let change = app.change();
     let title = match app.current() {
         Some(s) => {
             let sep = || Span::styled(" · ", Style::new().fg(DIM));
@@ -124,6 +125,15 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
                     None => Span::styled("failed", Style::new().fg(RED)),
                 },
             ];
+            if let Some(c) = change {
+                // Say where it changed: the change may be scrolled out of view.
+                let text = match c.lines {
+                    1 => format!("changed: line {}", c.first),
+                    n => format!("changed: {n} lines from line {}", c.first),
+                };
+                spans.push(sep());
+                spans.push(Span::styled(text, Style::new().fg(YELLOW)));
+            }
             if s.runs > 1 {
                 // Unchanged runs were merged into this result.
                 spans.push(sep());
