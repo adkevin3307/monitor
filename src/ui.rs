@@ -1,38 +1,51 @@
 use chrono::Local;
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
     ScrollbarOrientation, ScrollbarState,
 };
 
 use crate::app::App;
 use crate::cli::{format_bytes, format_interval};
 
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// Styling follows git-graph: fixed RGB colors (not terminal theme colors,
+// which vary between terminals) chosen to stay legible on dark backgrounds,
+// a cyan accent for focus and keys, and dark gray for secondary text.
 const ACCENT: Color = Color::Cyan;
+const DIM: Color = Color::DarkGray;
+const ID: Color = Color::Yellow;
+const BLUE: Color = Color::Rgb(94, 149, 217);
+const GREEN: Color = Color::Rgb(102, 187, 102);
+const RED: Color = Color::Rgb(217, 106, 106);
+const MAGENTA: Color = Color::Rgb(200, 115, 200);
+const YELLOW: Color = Color::Rgb(204, 178, 85);
+const SELECTED_BG: Color = Color::Rgb(45, 55, 75);
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const HISTORY_WIDTH: u16 = 24;
 
 pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
-    let [title, main, footer] = Layout::vertical([
+    let [header, main, footer] = Layout::vertical([
         Constraint::Length(if app.show_title { 1 } else { 0 }),
-        Constraint::Min(1),
+        Constraint::Min(3),
         Constraint::Length(1),
     ])
     .areas(f.area());
 
     // The history panel is only useful while browsing it.
-    let hist_w = if app.time_machine() && main.width >= 50 { 22 } else { 0 };
-    let [body, hist] =
+    let hist_w = if app.time_machine() && main.width >= 50 { HISTORY_WIDTH } else { 0 };
+    let [output, history] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(hist_w)]).areas(main);
 
     if app.show_title {
-        draw_title(f, app, title, hostname);
+        draw_header(f, app, header, hostname);
     }
-    draw_body(f, app, body);
+    draw_output(f, app, output);
     if hist_w > 0 {
-        draw_history(f, app, hist);
+        draw_history(f, app, history);
     }
     draw_footer(f, app, footer);
     if app.show_help {
@@ -40,80 +53,88 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
     }
 }
 
-fn draw_title(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
-    let mut left = vec![
-        Span::raw(" Every ").dim(),
-        Span::raw(format_interval(app.interval)).fg(ACCENT).bold(),
+fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
+    let mut spans = vec![
+        Span::styled(" monitor ", Style::new().bg(ACCENT).fg(Color::Black)),
+        Span::raw(" "),
+        Span::raw(app.command.clone()),
+        Span::styled("  every ", Style::new().fg(DIM)),
+        Span::styled(format_interval(app.interval), Style::new().fg(BLUE)),
     ];
     if app.precise {
-        left.push(Span::raw(" (precise)").dim());
+        spans.push(Span::styled(" (precise)", Style::new().fg(DIM)));
     }
-    left.push(Span::raw(": ").dim());
-    left.push(Span::raw(app.command.clone()).bold());
-
-    let right = Line::from(vec![
-        Span::raw(hostname.to_owned()).dim(),
-        Span::raw("  "),
-        Span::raw(Local::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-        Span::raw(" "),
-    ])
-    .alignment(Alignment::Right);
-
-    let rw = right.width() as u16;
-    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(rw)]).areas(area);
-    f.render_widget(Paragraph::new(Line::from(left)), l);
-    f.render_widget(Paragraph::new(right), r);
+    let right = format!("{hostname}  {} ", Local::now().format("%Y-%m-%d %H:%M:%S"));
+    let used: usize = spans.iter().map(|s| s.width()).sum();
+    let pad = (area.width as usize).saturating_sub(used + right.chars().count());
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(right, Style::new().fg(DIM)));
+    f.render_widget(Line::from(spans), area);
 }
 
-fn mode_badge(app: &App) -> Line<'static> {
-    let mut spans = Vec::new();
+fn panel<'a>(title: impl Into<Line<'a>>, focused: bool) -> Block<'a> {
+    let mut title: Line = title.into();
+    if focused && title.spans.len() == 1 {
+        title = title.style(Style::new().fg(ACCENT));
+    }
+    Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(if focused { ACCENT } else { DIM }))
+        .title(title)
+}
+
+/// Live / time machine / suspended, plus a spinner while a run is in progress.
+fn mode_line(app: &App) -> Line<'static> {
+    let mut spans = vec![];
     if !app.running.is_empty() {
         let i = (Local::now().timestamp_millis() / 100) as usize % SPINNER.len();
-        spans.push(Span::raw(format!(" {} ", SPINNER[i])).fg(ACCENT));
+        spans.push(Span::styled(format!(" {}", SPINNER[i]), Style::new().fg(ACCENT)));
     }
-    let (label, color) = if app.time_machine() {
-        (" TIME MACHINE ", Color::Magenta)
+    if app.time_machine() {
+        spans.push(Span::styled(" ◆ time machine", Style::new().fg(MAGENTA)));
     } else {
-        (" LIVE ", Color::Green)
-    };
-    spans.push(Span::styled(label, Style::new().fg(Color::Black).bg(color).bold()));
+        spans.push(Span::styled(" ● live", Style::new().fg(GREEN)));
+    }
     if app.suspended {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(" SUSPENDED ", Style::new().fg(Color::Black).bg(Color::Yellow).bold()));
+        spans.push(Span::styled(" · suspended", Style::new().fg(YELLOW)));
     }
     spans.push(Span::raw(" "));
     Line::from(spans).alignment(Alignment::Right)
 }
 
-fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
-    let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if app.time_machine() { Color::Magenta } else { Color::DarkGray }))
-        .title_top(mode_badge(app));
-
-    if let Some(s) = app.current() {
-        let mut info = vec![
-            Span::raw(" "),
-            Span::raw(format!("#{}", s.id)).fg(ACCENT).bold(),
-            Span::raw("  "),
-            Span::raw(s.start.format("%H:%M:%S%.3f").to_string()),
-            Span::raw("  "),
-            Span::raw(format_duration(s.duration)).dim(),
-            Span::raw("  "),
-        ];
-        info.push(match s.code {
-            Some(0) => Span::raw("exit 0").fg(Color::Green),
-            Some(c) => Span::raw(format!("exit {c}")).fg(Color::Red).bold(),
-            None => Span::raw("failed").fg(Color::Red).bold(),
-        });
-        if s.runs > 1 {
-            // Unchanged runs were merged into this result.
-            info.push(Span::raw(format!("  ×{} until {}", s.runs, s.last_seen.format("%H:%M:%S"))).dim());
+fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
+    let title = match app.current() {
+        Some(s) => {
+            let sep = || Span::styled(" · ", Style::new().fg(DIM));
+            let mut spans = vec![
+                Span::raw(" "),
+                Span::styled(format!("#{}", s.id), Style::new().fg(ID)),
+                sep(),
+                Span::raw(s.start.format("%H:%M:%S%.3f").to_string()),
+                sep(),
+                Span::styled(format_duration(s.duration), Style::new().fg(DIM)),
+                sep(),
+                match s.code {
+                    Some(0) => Span::styled("exit 0", Style::new().fg(GREEN)),
+                    Some(c) => Span::styled(format!("exit {c}"), Style::new().fg(RED)),
+                    None => Span::styled("failed", Style::new().fg(RED)),
+                },
+            ];
+            if s.runs > 1 {
+                // Unchanged runs were merged into this result.
+                spans.push(sep());
+                spans.push(Span::styled(
+                    format!("×{} until {}", s.runs, s.last_seen.format("%H:%M:%S")),
+                    Style::new().fg(DIM),
+                ));
+            }
+            spans.push(Span::raw(" "));
+            Line::from(spans)
         }
-        info.push(Span::raw(" "));
-        block = block.title_top(Line::from(info));
-    }
-
+        None => Line::raw(" Output "),
+    };
+    let block = panel(title, !app.time_machine()).title(mode_line(app));
     let inner = block.inner(area);
     f.render_widget(block, area);
     app.view_height = inner.height as usize;
@@ -121,36 +142,39 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
 
     if app.rows(inner.width).is_none() {
         let msg = if app.running.is_empty() { "No output yet" } else { "Waiting for first run…" };
-        f.render_widget(Paragraph::new(msg).dim().alignment(Alignment::Center), inner);
+        f.render_widget(
+            Paragraph::new(msg).style(Style::new().fg(DIM)).alignment(Alignment::Center),
+            inner,
+        );
         return;
     }
     app.after_layout();
 
     let rows = app.cached_rows().expect("rows built above");
     let total = rows.lines.len();
-    let end = (app.scroll_y + inner.height as usize).min(total);
+    let height = inner.height as usize;
+    let end = (app.scroll_y + height).min(total);
     let visible: Vec<Line> = rows.lines[app.scroll_y.min(end)..end].to_vec();
-    f.render_widget(Paragraph::new(visible).scroll((0, app.scroll_x as u16)), inner);
+    let hscroll = u16::try_from(app.scroll_x).unwrap_or(u16::MAX);
+    f.render_widget(Paragraph::new(visible).scroll((0, hscroll)), inner);
 
-    if total > inner.height as usize {
-        let mut state = ScrollbarState::new(total.saturating_sub(inner.height as usize))
+    if total > height {
+        let mut state = ScrollbarState::new(total.saturating_sub(height))
             .position(app.scroll_y)
-            .viewport_content_length(inner.height as usize);
+            .viewport_content_length(height);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
                 .thumb_style(Style::new().fg(ACCENT))
-                .track_style(Style::new().fg(Color::DarkGray)),
-            area.inner(ratatui::layout::Margin { vertical: 1, horizontal: 0 }),
+                .track_style(Style::new().fg(DIM)),
+            area.inner(Margin { vertical: 1, horizontal: 0 }),
             &mut state,
         );
-        let pos = Line::from(format!(" {}-{}/{} ", app.scroll_y + 1, end, total))
-            .dim()
+        let pos = Line::styled(format!(" {}-{}/{} ", app.scroll_y + 1, end, total), Style::new().fg(DIM))
             .alignment(Alignment::Right);
-        f.render_widget(pos, Rect { y: area.bottom() - 1, height: 1, ..area }.inner(
-            ratatui::layout::Margin { vertical: 0, horizontal: 1 },
-        ));
+        let bottom = Rect { y: area.bottom() - 1, height: 1, ..area };
+        f.render_widget(pos, bottom.inner(Margin { vertical: 0, horizontal: 1 }));
     }
 }
 
@@ -161,148 +185,134 @@ fn draw_history(f: &mut Frame, app: &App, area: Rect) {
         .iter()
         .rev()
         .map(|s| {
-            let id_style = if s.success() { Style::new().fg(ACCENT) } else { Style::new().fg(Color::Red) };
-            let mut time_style = Style::new();
-            if !s.changed {
-                time_style = time_style.add_modifier(Modifier::DIM);
-            }
+            let id = Style::new().fg(if s.success() { ID } else { RED });
+            // With --keep-unchanged, repeats of the previous output are dimmed.
+            let time = if s.changed || s.runs > 1 { Style::new() } else { Style::new().fg(DIM) };
+            let runs = if s.runs > 1 { format!(" ×{}", s.runs) } else { String::new() };
             ListItem::new(Line::from(vec![
-                Span::styled(if s.changed { "● " } else { "  " }, Style::new().fg(Color::Yellow)),
-                Span::styled(format!("{:>5}", s.id), id_style),
+                Span::styled(format!("{:>5}", s.id), id),
                 Span::raw(" "),
-                Span::styled(s.start.format("%H:%M:%S").to_string(), time_style),
+                Span::styled(s.start.format("%H:%M:%S").to_string(), time),
+                Span::styled(runs, Style::new().fg(DIM)),
             ]))
         })
         .collect();
 
-    let mut state = ListState::default();
-    if let Some(cur) = app.current_index() {
-        state.select(Some(n - 1 - cur));
-    }
-    let highlight = if app.time_machine() {
-        Style::new().bg(Color::Magenta).fg(Color::Black)
-    } else {
-        Style::new().add_modifier(Modifier::REVERSED)
-    };
+    let block = panel(format!(" History ({n}) "), true).title_bottom(
+        Line::styled(format!(" {} ", format_bytes(app.history_bytes)), Style::new().fg(DIM))
+            .alignment(Alignment::Right),
+    );
     let list = List::new(items)
-        .block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(Style::new().fg(Color::DarkGray))
-                .title(Line::from(format!(" History ({n}) ")).bold())
-                .title_bottom(
-                    Line::from(format!(" {} ", format_bytes(app.history_bytes)))
-                        .dim()
-                        .alignment(Alignment::Right),
-                ),
-        )
-        .highlight_style(highlight);
+        .block(block)
+        .highlight_style(Style::new().bg(SELECTED_BG))
+        .highlight_symbol("▶ ");
+    let mut state =
+        ListState::default().with_selected(app.current_index().map(|cur| n - 1 - cur));
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::raw(" ")];
+    for (k, v) in keys {
+        spans.push(Span::styled(k.to_string(), Style::new().fg(ACCENT)));
+        spans.push(Span::styled(format!(" {v}  "), Style::new().fg(DIM)));
+    }
+    spans
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let left = if let Some(input) = &app.search_input {
         Line::from(vec![
-            Span::raw(" /").fg(ACCENT).bold(),
+            Span::styled(" / ", Style::new().fg(ACCENT)),
             Span::raw(input.clone()),
-            Span::raw("█").fg(ACCENT),
+            Span::styled("█", Style::new().fg(ACCENT)),
+            Span::styled("   enter search  esc cancel", Style::new().fg(DIM)),
         ])
     } else if let Some(msg) = &app.message {
-        Line::from(Span::raw(format!(" {msg}")).fg(Color::Yellow))
-    } else {
-        let mut spans = Vec::new();
-        for (k, d) in [
-            ("q", "quit"),
-            ("space", "time machine"),
-            ("J/K", "history"),
-            ("s", "suspend"),
+        Line::styled(format!(" {msg}"), Style::new().fg(Color::Yellow))
+    } else if app.time_machine() {
+        Line::from(key_hints(&[
+            ("J/K", "older/newer"),
+            ("</>", "oldest/newest"),
+            ("j/k", "scroll"),
             ("/", "search"),
+            ("esc", "live"),
             ("?", "help"),
-        ] {
-            spans.push(Span::raw(format!(" {k}")).fg(ACCENT).bold());
-            spans.push(Span::raw(format!(" {d} ")).dim());
-        }
-        Line::from(spans)
+        ]))
+    } else {
+        Line::from(key_hints(&[
+            ("space", "time machine"),
+            ("j/k", "scroll"),
+            ("/", "search"),
+            ("s", if app.suspended { "resume" } else { "suspend" }),
+            ("?", "help"),
+            ("q", "quit"),
+        ]))
     };
 
     let toggle = |name: &'static str, on: bool| {
-        if on {
-            Span::styled(format!(" {name} "), Style::new().fg(Color::Black).bg(ACCENT))
-        } else {
-            Span::styled(format!(" {name} "), Style::new().fg(Color::DarkGray))
-        }
+        Span::styled(format!("{name} "), Style::new().fg(if on { ACCENT } else { DIM }))
     };
-    let mut right = vec![toggle("diff", app.diff), toggle("bell", app.bell), toggle("wrap", app.wrap)];
+    let mut right = vec![];
     if let Some(q) = &app.query {
         let count = app.cached_rows().map(|r| r.matches.len()).unwrap_or(0);
-        right.insert(0, Span::raw(format!(" /{q} [{count}] ")).fg(Color::Yellow));
+        right.push(Span::styled(format!("  /{q} [{count}]  "), Style::new().fg(Color::Yellow)));
     }
-    let right = Line::from(right).alignment(Alignment::Right);
+    right.extend([toggle("diff", app.diff), toggle("bell", app.bell), toggle("wrap", app.wrap)]);
+    let right = Line::from(right);
     let rw = right.width() as u16;
     let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(rw)]).areas(area);
-    f.render_widget(Paragraph::new(left), l);
-    f.render_widget(Paragraph::new(right), r);
+    f.render_widget(left, l);
+    f.render_widget(right, r);
+}
+
+fn centered(area: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(area.width.saturating_sub(2));
+    let h = h.min(area.height.saturating_sub(2));
+    Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
 }
 
 fn draw_help(f: &mut Frame) {
-    let sections: [(&str, &[(&str, &str)]); 4] = [
-        ("General", &[
-            ("q, Ctrl-C", "quit"),
-            ("?", "toggle this help"),
-            ("s", "suspend / resume running the command"),
-            ("r", "run the command now"),
-        ]),
-        ("Time machine", &[
-            ("space", "toggle time machine (pause the view)"),
-            ("J / Shift-↓", "older result"),
-            ("K / Shift-↑", "newer result"),
-            ("< / >", "oldest / newest result"),
-            ("Esc", "back to live view"),
-        ]),
-        ("View", &[
-            ("j k ↑ ↓", "scroll"),
-            ("Ctrl-D / Ctrl-U", "half page down / up"),
-            ("PgDn PgUp Ctrl-F/B", "page down / up"),
-            ("gg / G", "top / bottom"),
-            ("h l ← → 0", "scroll horizontally (when unwrapped)"),
-            ("d  b  w  t", "toggle diff / bell / wrap / title"),
-        ]),
-        ("Search", &[
-            ("/", "search (smart case)"),
-            ("n / N", "next / previous match"),
-            ("Esc", "clear search"),
-        ]),
+    let rows: &[(&str, &str)] = &[
+        ("General", ""),
+        ("q, ctrl-c", "quit"),
+        ("?", "toggle this help"),
+        ("s", "suspend / resume running the command"),
+        ("r", "run the command now"),
+        ("Time machine", ""),
+        ("space", "toggle time machine (pause the view, show history)"),
+        ("J / shift-↓", "older result"),
+        ("K / shift-↑", "newer result"),
+        ("< / >", "oldest / newest result"),
+        ("esc", "back to the live view"),
+        ("Output", ""),
+        ("j/k ↑/↓", "scroll"),
+        ("ctrl-d/u", "half page down / up"),
+        ("PgDn/PgUp, ctrl-f/b", "page down / up"),
+        ("gg / G", "top / bottom"),
+        ("h/l ←/→, 0", "scroll sideways (when not wrapping)"),
+        ("d / b / w / t", "toggle diff / bell / wrap / title"),
+        ("Search", ""),
+        ("/", "search (smart case)"),
+        ("n / N", "next / previous match"),
+        ("esc", "clear the search"),
     ];
-
-    let mut lines = Vec::new();
-    for (title, keys) in sections {
-        if !lines.is_empty() {
-            lines.push(Line::raw(""));
-        }
-        lines.push(Line::from(Span::raw(title).fg(ACCENT).bold()));
-        for (k, d) in keys {
-            lines.push(Line::from(vec![
-                Span::raw(format!("  {k:<20}")).bold(),
-                Span::raw(d.to_string()),
-            ]));
-        }
-    }
-
-    let area = f.area();
-    let w = 66.min(area.width);
-    let h = (lines.len() as u16 + 2).min(area.height);
-    let rect = Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h };
-    f.render_widget(Clear, rect);
-    f.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(Style::new().fg(ACCENT))
-                .title(Line::from(" monitor — keys ").bold())
-                .title_bottom(Line::from(" press any key ").dim().alignment(Alignment::Right)),
-        ),
-        rect,
-    );
+    let lines: Vec<Line> = rows
+        .iter()
+        .map(|(k, v)| {
+            if v.is_empty() {
+                Line::styled(format!(" {k}"), Style::new().fg(ACCENT))
+            } else {
+                Line::from(vec![
+                    Span::styled(format!("   {k:<22}"), Style::new().fg(Color::Yellow)),
+                    Span::raw(*v),
+                ])
+            }
+        })
+        .collect();
+    let area = centered(f.area(), 80, lines.len() as u16 + 2);
+    f.render_widget(Clear, area);
+    f.render_widget(Paragraph::new(lines).block(panel(" Help — any key to close ", true)), area);
 }
 
 fn format_duration(d: std::time::Duration) -> String {
