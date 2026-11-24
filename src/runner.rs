@@ -23,11 +23,26 @@ pub struct Snapshot {
     pub code: Option<i32>,
     /// Whether the output differs from the previous snapshot.
     pub changed: bool,
+    /// Number of runs this snapshot stands for (unchanged runs are merged in).
+    pub runs: usize,
+    /// Start time of the most recent run merged into this snapshot.
+    pub last_seen: DateTime<Local>,
 }
 
 impl Snapshot {
     pub fn success(&self) -> bool {
         self.code == Some(0)
+    }
+
+    /// Same output and exit status.
+    pub fn same_result(&self, other: &Snapshot) -> bool {
+        self.code == other.code && *self.output == *other.output
+    }
+
+    /// Folds an unchanged run (`other`) into this snapshot.
+    pub fn absorb(&mut self, other: &Snapshot) {
+        self.runs += other.runs;
+        self.last_seen = self.last_seen.max(other.last_seen);
     }
 }
 
@@ -156,6 +171,8 @@ fn run_once(id: usize, spec: &Spec, children: &Mutex<HashSet<i32>>, tx: &Sender<
         output: output.into(),
         code,
         changed: false,
+        runs: 1,
+        last_seen: start,
     }))
     .is_ok()
 }

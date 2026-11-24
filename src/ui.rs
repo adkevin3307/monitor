@@ -22,7 +22,8 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
     ])
     .areas(f.area());
 
-    let hist_w = if app.show_history && main.width >= 50 { 22 } else { 0 };
+    // The history panel is only useful while browsing it.
+    let hist_w = if app.time_machine() && main.width >= 50 { 22 } else { 0 };
     let [body, hist] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(hist_w)]).areas(main);
 
@@ -105,6 +106,10 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             Some(c) => Span::raw(format!("exit {c}")).fg(Color::Red).bold(),
             None => Span::raw("failed").fg(Color::Red).bold(),
         });
+        if s.runs > 1 {
+            // Unchanged runs were merged into this result.
+            info.push(Span::raw(format!("  ×{} until {}", s.runs, s.last_seen.format("%H:%M:%S"))).dim());
+        }
         info.push(Span::raw(" "));
         block = block.title_top(Line::from(info));
     }
@@ -209,8 +214,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         for (k, d) in [
             ("q", "quit"),
             ("space", "time machine"),
-            ("J/K", "browse"),
-            ("z", "history"),
+            ("J/K", "history"),
             ("s", "suspend"),
             ("/", "search"),
             ("?", "help"),
@@ -261,7 +265,6 @@ fn draw_help(f: &mut Frame) {
             ("PgDn PgUp Ctrl-F/B", "page down / up"),
             ("gg / G", "top / bottom"),
             ("h l ← → 0", "scroll horizontally (when unwrapped)"),
-            ("z", "show / hide the history panel"),
             ("d  b  w  t", "toggle diff / bell / wrap / title"),
         ]),
         ("Search", &[

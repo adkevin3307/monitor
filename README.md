@@ -3,7 +3,8 @@
 A modern `watch` command, inspired by [viddy](https://github.com/sachaos/viddy).
 It runs a command over and over and shows its output full-screen, and adds:
 
-- **Time machine**: every result is kept, so you can pause the view and go back to earlier results.
+- **Time machine**: results are kept, so you can pause the view and go back to earlier results.
+  A new result is recorded only when the output or exit status changes.
 - **Diff highlighting**: shows which characters changed since the previous run (`-d` / `d`).
 - **ANSI colors**: keeps the colors from the command's output.
 - **Scrolling and search**: vim-style keys, smart-case `/` search, and `n`/`N` to jump between matches.
@@ -41,6 +42,7 @@ monitor -x -- git status --short       # run directly, no shell
 | `--shell-options <OPTS>` | extra shell options before `-c`, e.g. `"-i"` |
 | `-e, --errexit` | exit when the command fails |
 | `-g, --chgexit` | exit when the output changes |
+| `-k, --keep-unchanged` | record every run, not only runs whose output or exit status changed |
 | `--max-history <N>` | how many results to keep (default 1000) |
 | `--max-history-size <SIZE>` | memory limit for kept results, e.g. `64M`, `1G` (default `128M`) |
 
@@ -61,17 +63,21 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `gg` / `G` | scroll |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
-| `z` | show / hide the history panel |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
-The history panel (hidden by default, toggle with `z`) lists results newest first. `●` marks results whose output
+While in time-machine mode, a history panel lists results newest first. `●` marks results whose output
 changed, and a red id means the command exited with a non-zero status. The
 bottom of the panel shows how much memory the kept results use.
 
 ## Memory
 
-Every result is kept for the time machine, up to two limits: `--max-history`
+Results are kept for the time machine up to two limits: `--max-history`
 results and `--max-history-size` bytes. When either is exceeded, the oldest
-results are dropped first. A result whose output matches the previous one
-shares its memory, so commands with output that rarely changes use almost no
-memory, even over very long runs.
+results are dropped first.
+
+By default, a run whose output and exit status match the latest result is not
+stored. It is merged into that result instead, and the title shows how many
+runs it covers and when it was last seen (`×12 until 12:05:00`). Commands
+whose output rarely changes therefore use almost no memory, even over very
+long runs. With `--keep-unchanged`, every run is recorded, but unchanged
+results still share memory with the previous one.

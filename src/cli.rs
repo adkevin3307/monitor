@@ -52,6 +52,10 @@ pub struct Cli {
     #[arg(short = 'g', long)]
     pub chgexit: bool,
 
+    /// Record every run in the history, not only runs whose output or exit status changed
+    #[arg(short = 'k', long)]
+    pub keep_unchanged: bool,
+
     /// Maximum number of results kept in the history
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     pub max_history: u64,

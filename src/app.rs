@@ -45,6 +45,8 @@ pub struct App {
     pub interval: Duration,
     pub precise: bool,
     pub max_history: usize,
+    /// Merge runs whose result equals the previous snapshot instead of storing them.
+    pub skip_unchanged: bool,
     pub max_history_bytes: usize,
     /// Bytes held by stored outputs (shared outputs counted once).
     pub history_bytes: usize,
@@ -60,7 +62,6 @@ pub struct App {
     pub diff: bool,
     pub bell: bool,
     pub show_title: bool,
-    pub show_history: bool,
     pub wrap: bool,
     pub show_help: bool,
 
@@ -87,6 +88,7 @@ impl App {
             interval: cli.interval,
             precise: cli.precise,
             max_history: cli.max_history as usize,
+            skip_unchanged: !cli.keep_unchanged,
             max_history_bytes: cli.max_history_size,
             history_bytes: 0,
             errexit: cli.errexit,
@@ -98,7 +100,6 @@ impl App {
             diff: cli.differences,
             bell: cli.bell,
             show_title: !cli.no_title,
-            show_history: false,
             wrap: !cli.unfold,
             show_help: false,
             scroll_y: 0,
@@ -140,6 +141,22 @@ impl App {
             Msg::Finished(mut snap) => {
                 self.running.remove(&snap.id);
                 let pos = self.history.partition_point(|s| s.id < snap.id);
+                let is_latest = pos == self.history.len();
+                let failed = snap.code != Some(0);
+                let code = snap.code.unwrap_or(-1);
+                if is_latest && failed && self.errexit {
+                    self.exit = Some(ExitReason::Error(code));
+                }
+
+                if self.skip_unchanged {
+                    if let Some(prev) = pos.checked_sub(1).map(|p| &mut self.history[p]) {
+                        if prev.same_result(&snap) {
+                            prev.absorb(&snap);
+                            return;
+                        }
+                    }
+                }
+
                 snap.changed = match pos.checked_sub(1) {
                     Some(p) => {
                         let prev = &self.history[p].output;
@@ -161,14 +178,28 @@ impl App {
                         next.changed = true;
                     }
                 }
-                let is_latest = pos == self.history.len();
                 let changed = snap.changed;
-                let failed = snap.code != Some(0);
-                let code = snap.code.unwrap_or(-1);
                 self.history.insert(pos, snap);
                 if let Some(sel) = self.selected.as_mut() {
                     if pos <= *sel {
                         *sel += 1;
+                    }
+                }
+                // With precise mode, runs can finish out of order: the newer
+                // neighbour may now turn out to be an unchanged repeat.
+                if self.skip_unchanged
+                    && self.history.get(pos + 1).is_some_and(|n| n.same_result(&self.history[pos]))
+                {
+                    let next = self.history.remove(pos + 1);
+                    self.history[pos].absorb(&next);
+                    if let Some(sel) = self.selected.as_mut() {
+                        if *sel > pos {
+                            *sel -= 1;
+                        }
+                    }
+                    if pos + 1 < self.history.len() {
+                        let differs = *self.history[pos + 1].output != *self.history[pos].output;
+                        self.history[pos + 1].changed = differs;
                     }
                 }
                 self.trim_history();
@@ -182,9 +213,6 @@ impl App {
                     if self.chgexit {
                         self.exit = Some(ExitReason::Changed);
                     }
-                }
-                if is_latest && failed && self.errexit {
-                    self.exit = Some(ExitReason::Error(code));
                 }
             }
         }
@@ -362,7 +390,6 @@ impl App {
                 self.message = Some(format!("bell {}", if self.bell { "on" } else { "off" }));
             }
             KeyCode::Char('t') => self.show_title = !self.show_title,
-            KeyCode::Char('z') => self.show_history = !self.show_history,
             KeyCode::Char('w') | KeyCode::Char('u') => self.wrap = !self.wrap,
 
             // scrolling
@@ -574,7 +601,7 @@ mod tests {
     use chrono::Local;
 
     fn snap(id: usize, output: &str) -> Snapshot {
-        Snapshot { id, start: Local::now(), duration: Duration::ZERO, output: output.into(), code: Some(0), changed: false }
+        Snapshot { id, start: Local::now(), duration: Duration::ZERO, output: output.into(), code: Some(0), changed: false, runs: 1, last_seen: Local::now() }
     }
 
     fn text(line: &Line) -> String {
@@ -610,5 +637,72 @@ mod tests {
         assert_eq!(rows.matches, vec![0, 2]);
         let rows = build_rows(&snap(1, out), None, Some("Error"), true, 80);
         assert_eq!(rows.matches, vec![0]);
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use clap::Parser;
+    use chrono::Local;
+
+    fn app(extra: &[&str]) -> App {
+        // A huge interval: the runner's single run finishes into a dropped channel.
+        let mut args = vec!["monitor", "-n", "1h"];
+        args.extend_from_slice(extra);
+        args.push("true");
+        let cli = Cli::try_parse_from(args).unwrap();
+        let (runner, _rx) = Runner::start(&cli);
+        App::new(&cli, runner)
+    }
+
+    fn done(app: &mut App, id: usize, output: &str, code: i32) {
+        let t = Local::now();
+        app.on_msg(Msg::Finished(Snapshot {
+            id,
+            start: t,
+            duration: Duration::ZERO,
+            output: output.into(),
+            code: Some(code),
+            changed: false,
+            runs: 1,
+            last_seen: t,
+        }));
+    }
+
+    fn ids(app: &App) -> Vec<(usize, usize)> {
+        app.history.iter().map(|s| (s.id, s.runs)).collect()
+    }
+
+    #[test]
+    fn merges_unchanged_runs() {
+        let mut a = app(&[]);
+        for (id, out, code) in [(1, "a", 0), (2, "a", 0), (3, "b", 0), (4, "b", 0), (5, "b", 1), (6, "a", 0)] {
+            done(&mut a, id, out, code);
+        }
+        // Same output but a different exit status still counts as a change.
+        assert_eq!(ids(&a), vec![(1, 2), (3, 2), (5, 1), (6, 1)]);
+    }
+
+    #[test]
+    fn merges_out_of_order_runs() {
+        let mut a = app(&[]);
+        done(&mut a, 1, "a", 0);
+        done(&mut a, 3, "b", 0);
+        done(&mut a, 2, "b", 0); // finishes late, same as its newer neighbour
+        assert_eq!(ids(&a), vec![(1, 1), (2, 2)]);
+        assert!(a.history[1].changed);
+    }
+
+    #[test]
+    fn keep_unchanged_records_every_run() {
+        let mut a = app(&["--keep-unchanged"]);
+        for id in 1..=3 {
+            done(&mut a, id, "same", 0);
+        }
+        assert_eq!(a.history.len(), 3);
+        // Unchanged results share one buffer.
+        assert!(Arc::ptr_eq(&a.history[0].output, &a.history[2].output));
+        assert_eq!(a.history_bytes, 4);
     }
 }
