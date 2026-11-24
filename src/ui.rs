@@ -1,7 +1,7 @@
 use chrono::Local;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
@@ -190,6 +190,12 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+/// The style of selected text. Reverse video (used for differences) is dropped,
+/// or it would swap the selection background into the text color.
+fn selected_style(style: Style) -> Style {
+    style.remove_modifier(Modifier::REVERSED).bg(SELECTION_BG)
+}
+
 /// Gives the selected columns of `line` (content row `row`) a selection background.
 fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Line<'static> {
     let Some((from, to)) = sel.columns(row) else { return line.clone() };
@@ -205,7 +211,7 @@ fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Lin
             if inside && !plain.is_empty() {
                 spans.push(Span::styled(std::mem::take(&mut plain), span.style));
             } else if !inside && !marked.is_empty() {
-                spans.push(Span::styled(std::mem::take(&mut marked), span.style.bg(SELECTION_BG)));
+                spans.push(Span::styled(std::mem::take(&mut marked), selected_style(span.style)));
             }
             if inside { marked.push(c) } else { plain.push(c) }
             col += w;
@@ -214,7 +220,7 @@ fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Lin
             spans.push(Span::styled(plain, span.style));
         }
         if !marked.is_empty() {
-            spans.push(Span::styled(marked, span.style.bg(SELECTION_BG)));
+            spans.push(Span::styled(marked, selected_style(span.style)));
         }
     }
     Line::from(spans)
