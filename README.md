@@ -68,9 +68,10 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
-While in time-machine mode, a history panel lists results newest first. `●` marks results whose output
-changed, and a red id means the command exited with a non-zero status. The
-bottom of the panel shows how much memory the kept results use.
+While in time-machine mode, a history panel lists results newest first, by the
+time each one started. `×N` shows how many unchanged runs a result covers, and a
+red time means the command exited with a non-zero status. The bottom of the
+panel shows how much memory the kept results use.
 
 ## Memory
 

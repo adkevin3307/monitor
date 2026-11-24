@@ -16,7 +16,8 @@ use crate::cli::{format_bytes, format_interval};
 // a cyan accent for focus and keys, and dark gray for secondary text.
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
-const ID: Color = Color::Yellow;
+/// A result's start time identifies it, like a commit hash in git-graph.
+const TIME: Color = Color::Yellow;
 const BLUE: Color = Color::Rgb(94, 149, 217);
 const GREEN: Color = Color::Rgb(102, 187, 102);
 const RED: Color = Color::Rgb(217, 106, 106);
@@ -25,7 +26,7 @@ const YELLOW: Color = Color::Rgb(204, 178, 85);
 const SELECTED_BG: Color = Color::Rgb(45, 55, 75);
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const HISTORY_WIDTH: u16 = 24;
+const HISTORY_WIDTH: u16 = 20;
 
 pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
     let [header, main, footer] = Layout::vertical([
@@ -110,9 +111,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
             let sep = || Span::styled(" · ", Style::new().fg(DIM));
             let mut spans = vec![
                 Span::raw(" "),
-                Span::styled(format!("#{}", s.id), Style::new().fg(ID)),
-                sep(),
-                Span::raw(s.start.format("%H:%M:%S%.3f").to_string()),
+                Span::styled(s.start.format("%H:%M:%S%.3f").to_string(), Style::new().fg(TIME)),
                 sep(),
                 Span::styled(format_duration(s.duration), Style::new().fg(DIM)),
                 sep(),
@@ -186,13 +185,17 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .rev()
         .map(|s| {
-            let id = Style::new().fg(if s.success() { ID } else { RED });
-            // With --keep-unchanged, repeats of the previous output are dimmed.
-            let time = if s.changed || s.runs > 1 { Style::new() } else { Style::new().fg(DIM) };
+            // Failed runs are red; with --keep-unchanged, repeats of the
+            // previous output are dimmed.
+            let time = if !s.success() {
+                Style::new().fg(RED)
+            } else if s.changed || s.runs > 1 {
+                Style::new().fg(TIME)
+            } else {
+                Style::new().fg(DIM)
+            };
             let runs = if s.runs > 1 { format!(" ×{}", s.runs) } else { String::new() };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:>5}", s.id), id),
-                Span::raw(" "),
                 Span::styled(s.start.format("%H:%M:%S").to_string(), time),
                 Span::styled(runs, Style::new().fg(DIM)),
             ]))
