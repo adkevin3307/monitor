@@ -41,6 +41,34 @@ pub struct Rows {
     pub matches: Vec<usize>,
     /// Width of the widest row (for horizontal scrolling).
     pub max_width: usize,
+    /// Whether each row continues the previous one (a wrapped long line).
+    pub continued: Vec<bool>,
+}
+
+/// A mouse selection in the output, in content coordinates (row, column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection {
+    pub anchor: (usize, usize),
+    pub cursor: (usize, usize),
+    pub dragged: bool,
+}
+
+impl Selection {
+    /// Start and end, in reading order; both ends are inclusive.
+    pub fn range(&self) -> ((usize, usize), (usize, usize)) {
+        if self.anchor <= self.cursor { (self.anchor, self.cursor) } else { (self.cursor, self.anchor) }
+    }
+
+    /// Columns `[from, to)` selected on `row`, if any.
+    pub fn columns(&self, row: usize) -> Option<(usize, usize)> {
+        let (start, end) = self.range();
+        if row < start.0 || row > end.0 {
+            return None;
+        }
+        let from = if row == start.0 { start.1 } else { 0 };
+        let to = if row == end.0 { end.1 + 1 } else { usize::MAX };
+        Some((from, to))
+    }
 }
 
 pub struct App {
@@ -77,6 +105,12 @@ pub struct App {
     pub history_area: Rect,
     /// First visible row of the history list, kept between frames.
     pub history_offset: usize,
+    /// Inner area of the output panel last frame.
+    pub output_area: Rect,
+    pub selection: Option<Selection>,
+    /// Snapshot (by id) held on screen while a selection is being made,
+    /// so new output can't shift the text under the mouse.
+    pinned: Option<usize>,
 
     pub query: Option<String>,
     pub search_input: Option<String>,
@@ -115,6 +149,9 @@ impl App {
             view_width: 0,
             history_area: Rect::default(),
             history_offset: 0,
+            output_area: Rect::default(),
+            selection: None,
+            pinned: None,
             query: None,
             search_input: None,
             message: None,
@@ -129,10 +166,15 @@ impl App {
     }
 
     pub fn current_index(&self) -> Option<usize> {
-        match self.selected {
-            Some(i) => Some(i),
-            None => self.history.len().checked_sub(1),
+        if let Some(i) = self.selected {
+            return Some(i);
         }
+        if let Some(id) = self.pinned {
+            if let Ok(i) = self.history.binary_search_by_key(&id, |s| s.id) {
+                return Some(i);
+            }
+        }
+        self.history.len().checked_sub(1)
     }
 
     pub fn current(&self) -> Option<&Snapshot> {
@@ -347,6 +389,8 @@ impl App {
             self.show_help = false;
             return;
         }
+        self.selection = None;
+        self.pinned = None;
 
         self.message = None;
         let half = (self.view_height / 2).max(1);
@@ -423,8 +467,34 @@ impl App {
         if self.show_help || self.search_input.is_some() {
             return;
         }
-        let over_history = self.history_area.contains(Position::new(mouse.column, mouse.row));
+        let pos = Position::new(mouse.column, mouse.row);
+        let over_history = self.history_area.contains(pos);
         match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if self.output_area.contains(pos) => {
+                let at = self.content_pos(mouse.column, mouse.row);
+                self.selection = Some(Selection { anchor: at, cursor: at, dragged: false });
+                self.pinned = self.current().map(|s| s.id);
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selection.is_some() => {
+                // Dragging past the top or bottom edge scrolls the output.
+                if mouse.row < self.output_area.y {
+                    self.scroll_y = self.scroll_y.saturating_sub(1);
+                } else if mouse.row >= self.output_area.bottom() {
+                    self.scroll_y += 1;
+                }
+                self.clamp_scroll();
+                let at = self.content_pos(mouse.column, mouse.row);
+                if let Some(sel) = self.selection.as_mut() {
+                    sel.cursor = at;
+                    sel.dragged = true;
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.selection.is_some() => {
+                self.finish_selection();
+                return;
+            }
             // The history lists newest first, so scrolling down goes to older results.
             MouseEventKind::ScrollDown if over_history => self.move_history(-1),
             MouseEventKind::ScrollUp if over_history => self.move_history(1),
@@ -439,6 +509,32 @@ impl App {
             _ => return,
         }
         self.clamp_scroll();
+    }
+
+    /// Maps a terminal cell to (row, column) in the output content,
+    /// clamped to the visible output area.
+    fn content_pos(&self, x: u16, y: u16) -> (usize, usize) {
+        let a = self.output_area;
+        let x = x.clamp(a.x, a.right().saturating_sub(1));
+        let y = y.clamp(a.y, a.bottom().saturating_sub(1));
+        let rows = self.cached_rows().map(|r| r.lines.len()).unwrap_or(0);
+        let row = (self.scroll_y + (y - a.y) as usize).min(rows.saturating_sub(1));
+        (row, self.scroll_x + (x - a.x) as usize)
+    }
+
+    /// Copies the selected text to the clipboard and releases the view.
+    fn finish_selection(&mut self) {
+        let sel = self.selection.take();
+        self.pinned = None;
+        let Some(sel) = sel.filter(|s| s.dragged) else { return };
+        let Some(rows) = self.cached_rows() else { return };
+        let text = selected_text(rows, &sel);
+        if text.is_empty() {
+            return;
+        }
+        copy_to_clipboard(&text);
+        let n = text.chars().count();
+        self.message = Some(format!("copied {n} character{} to the clipboard", if n == 1 { "" } else { "s" }));
     }
 
     /// Selects the history row at terminal row `y` (clicks on the border are ignored).
@@ -521,6 +617,7 @@ pub fn build_rows(
     });
 
     let mut rows = Vec::new();
+    let mut continued = Vec::new();
     let mut matches = Vec::new();
     let mut max_width = 0;
     let width = width.max(1);
@@ -560,12 +657,15 @@ pub fn build_rows(
         // Lay out into visual rows.
         let mut row: Vec<(char, Style)> = Vec::new();
         let mut row_w = 0;
+        let mut cont = false;
         let mut starts = match_starts.into_iter().peekable();
         for (j, (c, style)) in line.into_iter().enumerate() {
             let cw = c.width().unwrap_or(0);
             if wrap && row_w + cw > width && !row.is_empty() {
                 max_width = max_width.max(row_w);
                 rows.push(to_line(std::mem::take(&mut row)));
+                continued.push(cont);
+                cont = true;
                 row_w = 0;
             }
             while starts.peek() == Some(&j) {
@@ -577,10 +677,11 @@ pub fn build_rows(
         }
         max_width = max_width.max(row_w);
         rows.push(to_line(row));
+        continued.push(cont);
     }
     matches.dedup();
 
-    Rows { lines: rows, matches, max_width }
+    Rows { lines: rows, matches, max_width, continued }
 }
 
 /// Parses ANSI output into lines of (char, style), expanding tabs and
@@ -614,6 +715,55 @@ fn styled_chars(output: &str) -> Vec<Vec<(char, Style)>> {
             out
         })
         .collect()
+}
+
+/// The text covered by `sel`. Wrapped rows are joined back into one line.
+pub fn selected_text(rows: &Rows, sel: &Selection) -> String {
+    let (start, end) = sel.range();
+    let mut out = String::new();
+    for r in start.0..=end.0.min(rows.lines.len().saturating_sub(1)) {
+        let Some((from, to)) = sel.columns(r) else { continue };
+        if r > start.0 && !rows.continued[r] {
+            out.push('\n');
+        }
+        let mut col = 0;
+        for span in &rows.lines[r].spans {
+            for c in span.content.chars() {
+                let w = c.width().unwrap_or(0);
+                if col < to && col + w.max(1) > from {
+                    out.push(c);
+                }
+                col += w;
+            }
+        }
+    }
+    out
+}
+
+/// Puts `text` on the system clipboard with an OSC 52 escape sequence,
+/// which most modern terminals (and tmux with `set-clipboard on`) support.
+fn copy_to_clipboard(text: &str) {
+    let seq = format!("\x1b]52;c;{}\x07", base64(text.as_bytes()));
+    let mut out = std::io::stdout();
+    let _ = out.write_all(seq.as_bytes());
+    let _ = out.flush();
+}
+
+fn base64(data: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 fn to_line(chars: Vec<(char, Style)>) -> Line<'static> {
@@ -656,6 +806,29 @@ mod tests {
         let rows = build_rows(&snap(1, "0123456789\nx"), None, None, false, 4);
         assert_eq!(rows.lines.len(), 2);
         assert_eq!(rows.max_width, 10);
+    }
+
+    #[test]
+    fn selection_text_joins_wrapped_rows() {
+        // "0123456789" wraps into 3 rows at width 4, then "abc".
+        let rows = build_rows(&snap(1, "0123456789\nabc\nxyz"), None, None, true, 4);
+        assert_eq!(rows.continued, vec![false, true, true, false, false]);
+        let sel = |a, c| Selection { anchor: a, cursor: c, dragged: true };
+        // Both ends are inclusive.
+        assert_eq!(selected_text(&rows, &sel((0, 2), (2, 0))), "2345678");
+        assert_eq!(selected_text(&rows, &sel((3, 1), (1, 3))), "789\nab");
+        assert_eq!(selected_text(&rows, &sel((2, 1), (4, 0))), "9\nabc\nx");
+        // Dragging backwards gives the same text.
+        assert_eq!(selected_text(&rows, &sel((4, 0), (2, 1))), "9\nabc\nx");
+    }
+
+    #[test]
+    fn base64_encoding() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64("héllo\n".as_bytes()), "aMOpbGxvCg==");
     }
 
     #[test]

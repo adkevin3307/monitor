@@ -8,7 +8,9 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState,
 };
 
-use crate::app::App;
+use unicode_width::UnicodeWidthChar;
+
+use crate::app::{App, Selection};
 use crate::cli::{format_bytes, format_interval};
 
 // Styling follows git-graph: fixed RGB colors (not terminal theme colors,
@@ -24,6 +26,7 @@ const RED: Color = Color::Rgb(217, 106, 106);
 const MAGENTA: Color = Color::Rgb(200, 115, 200);
 const YELLOW: Color = Color::Rgb(204, 178, 85);
 const SELECTED_BG: Color = Color::Rgb(45, 55, 75);
+const SELECTION_BG: Color = Color::Rgb(70, 90, 130);
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const HISTORY_WIDTH: u16 = 20;
@@ -139,6 +142,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(block, area);
     app.view_height = inner.height as usize;
     app.view_width = inner.width as usize;
+    app.output_area = inner;
 
     if app.rows(inner.width).is_none() {
         let msg = if app.running.is_empty() { "No output yet" } else { "Waiting for first run…" };
@@ -154,7 +158,15 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     let total = rows.lines.len();
     let height = inner.height as usize;
     let end = (app.scroll_y + height).min(total);
-    let visible: Vec<Line> = rows.lines[app.scroll_y.min(end)..end].to_vec();
+    let first = app.scroll_y.min(end);
+    let visible: Vec<Line> = rows.lines[first..end]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| match app.selection {
+            Some(sel) => highlight_selection(line, &sel, first + i),
+            None => line.clone(),
+        })
+        .collect();
     let hscroll = u16::try_from(app.scroll_x).unwrap_or(u16::MAX);
     f.render_widget(Paragraph::new(visible).scroll((0, hscroll)), inner);
 
@@ -176,6 +188,36 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
         let bottom = Rect { y: area.bottom() - 1, height: 1, ..area };
         f.render_widget(pos, bottom.inner(Margin { vertical: 0, horizontal: 1 }));
     }
+}
+
+/// Gives the selected columns of `line` (content row `row`) a selection background.
+fn highlight_selection(line: &Line<'static>, sel: &Selection, row: usize) -> Line<'static> {
+    let Some((from, to)) = sel.columns(row) else { return line.clone() };
+    let mut spans = Vec::new();
+    let mut col = 0;
+    for span in &line.spans {
+        let mut plain = String::new();
+        let mut marked = String::new();
+        for c in span.content.chars() {
+            let w = c.width().unwrap_or(0);
+            let inside = col < to && col + w.max(1) > from;
+            // Flush when switching between selected and unselected text.
+            if inside && !plain.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut plain), span.style));
+            } else if !inside && !marked.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut marked), span.style.bg(SELECTION_BG)));
+            }
+            if inside { marked.push(c) } else { plain.push(c) }
+            col += w;
+        }
+        if !plain.is_empty() {
+            spans.push(Span::styled(plain, span.style));
+        }
+        if !marked.is_empty() {
+            spans.push(Span::styled(marked, span.style.bg(SELECTION_BG)));
+        }
+    }
+    Line::from(spans)
 }
 
 fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
@@ -299,6 +341,8 @@ fn draw_help(f: &mut Frame) {
         ("g / G", "top / bottom"),
         ("mouse wheel", "scroll; over the history, older / newer result"),
         ("click", "select a result in the history"),
+        ("drag", "select output text; copied to the clipboard on release"),
+        ("shift-drag", "the terminal's own selection"),
         ("h/l ←/→, 0", "scroll sideways (when not wrapping)"),
         ("d / b / w / t", "toggle diff / bell / wrap / title"),
         ("Search", ""),

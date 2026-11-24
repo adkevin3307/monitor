@@ -37,7 +37,7 @@ monitor -x -- git status --short       # run directly, no shell
 | `-p, --precise` | run on a fixed schedule, even if the last run hasn't finished |
 | `-t, --no-title` | hide the title bar |
 | `-w, --unfold` | don't wrap lines (scroll horizontally instead) |
-| `--no-mouse` | don't capture the mouse: keeps the terminal's own text selection, but no wheel scrolling |
+| `--no-mouse` | don't capture the mouse: plain drag uses the terminal's own selection, but no wheel scrolling or clicking |
 | `-x, --exec` | run the command directly instead of through a shell |
 | `-s, --shell <SHELL>` | shell to use (default `sh`, env `MONITOR_SHELL`) |
 | `--shell-options <OPTS>` | extra shell options before `-c`, e.g. `"-i"` |
@@ -64,6 +64,8 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `g` / `G` | scroll; `g` / `G` jump to the top / bottom |
 | mouse wheel | scroll; over the history panel, older / newer result |
 | mouse click | select a result in the history panel |
+| mouse drag | select output text; it's copied to the clipboard when you release |
+| shift + drag | your terminal's own text selection |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
@@ -85,3 +87,15 @@ runs it covers and when it was last seen (`×12 until 12:05:00`). Commands
 whose output rarely changes therefore use almost no memory, even over very
 long runs. With `--keep-unchanged`, every run is recorded, but unchanged
 results still share memory with the previous one.
+
+## Copying text
+
+Drag over the output to select text. The view stays frozen while you drag,
+and dragging past the top or bottom edge scrolls. When you release the
+button, the text is copied to the system clipboard with OSC 52, and wrapped
+lines are joined back into one line. Windows Terminal, iTerm2, kitty,
+WezTerm, Alacritty and foot support OSC 52. Inside tmux, run
+`tmux set -s set-clipboard on`.
+
+Shift + drag (Option + drag in iTerm2) still gives your terminal's own
+selection.
