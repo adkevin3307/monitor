@@ -6,6 +6,7 @@ It runs a command over and over and shows its output full-screen, and adds:
 - **Time machine**: results are kept, so you can pause the view and go back to earlier results.
   A new result is recorded only when the output or exit status changes.
 - **Diff highlighting**: shows which characters changed since the previous run (`-d` / `d`).
+  The header lists the toggles that are on (`diff · bell · wrap`).
 - **ANSI colors**: keeps the colors from the command's output.
 - **Scrolling and search**: vim-style keys, and `/` regex search (smart case) in a small input box that jumps to matches while you type; `n`/`N` step through them and `Esc` hides the highlights. See [Shared search](#shared-search).
 - **Suspend / run now**: `s` pauses running the command, `r` runs it right away.
@@ -136,6 +137,29 @@ they move between panes and jump to HEAD).
 - Matches are highlighted in black on yellow. `esc` hides the highlights but
   keeps the search (the title then says `hidden`), like vim's `:noh`; `n` / `N`
   show them again and jump to the next / previous match.
+## Shared screen layout
+
+All three draw the same frame:
+
+```
+ tool  what it shows  state · flags that are on              tool-specific info
+╭ Panel  details ─────────────────────────────────────── /search  current/total ╮
+│ content                                                                       █
+│                                                                               ║
+╰──────────────────────────────────────────────────────────────────── 1-24/812 ╯
+ j/k move  / search  n/N next/prev  tool keys…  esc back  ? help  q quit
+```
+
+- The header starts with the tool's name on a cyan badge; flags appear only
+  while they are on (e.g. `wrap`, `diff · bell · wrap`).
+- Panels have rounded borders; the focused one is cyan.
+- A panel whose content doesn't fit has a scrollbar on its right border (cyan
+  thumb on a gray track) and the visible range on its bottom border.
+- The footer lists keys in the same order everywhere: movement, search, the
+  tool's own keys, `esc` back where it applies, then `? help` and `q quit`.
+  Keys are cyan and their descriptions gray; on a narrow terminal the tool's
+  own keys are dropped first, so help and quit always stay visible. A status
+  message (yellow) replaces the hints until the next key.
 
 ## Memory
 

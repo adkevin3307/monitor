@@ -93,11 +93,11 @@ fn draw_input(
     cursor: usize,
     info: Option<Span<'static>>,
     hints: &[(&str, &str)],
-) {
+) -> Option<Rect> {
     let full = f.area();
     let width = full.width.saturating_sub(4).min(60);
     if width < 10 || full.height < 3 {
-        return;
+        return None;
     }
     let area = Rect {
         x: full.x + (full.width - width) / 2,
@@ -149,6 +149,7 @@ fn draw_input(
     if let Some(info) = info {
         f.render_widget(Line::from(info).right_aligned(), info_area);
     }
+    Some(area)
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
@@ -161,6 +162,17 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, hostname: &str) {
     ];
     if app.precise {
         spans.push(Span::styled(" (precise)", Style::new().fg(DIM)));
+    }
+    // The toggles that are on, like track's header (d / b / w turn them on and off).
+    let flags: Vec<&str> = [(app.diff, "diff"), (app.bell, "bell"), (app.wrap, "wrap")]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect();
+    if !flags.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", flags.join(" · ")),
+            Style::new().fg(DIM),
+        ));
     }
     let right = format!("{hostname}  {} ", Local::now().format("%Y-%m-%d %H:%M:%S"));
     let used: usize = spans.iter().map(|s| s.width()).sum();
@@ -310,40 +322,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     let hscroll = u16::try_from(app.scroll_x).unwrap_or(u16::MAX);
     f.render_widget(Paragraph::new(visible).scroll((0, hscroll)), inner);
 
-    if total > height {
-        let mut state = ScrollbarState::new(total.saturating_sub(height))
-            .position(app.scroll_y)
-            .viewport_content_length(height);
-        f.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .thumb_style(Style::new().fg(ACCENT))
-                .track_style(Style::new().fg(DIM)),
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut state,
-        );
-        let pos = Line::styled(
-            format!(" {}-{}/{} ", app.scroll_y + 1, end, total),
-            Style::new().fg(DIM),
-        )
-        .alignment(Alignment::Right);
-        let bottom = Rect {
-            y: area.bottom() - 1,
-            height: 1,
-            ..area
-        };
-        f.render_widget(
-            pos,
-            bottom.inner(Margin {
-                vertical: 0,
-                horizontal: 1,
-            }),
-        );
-    }
+    draw_scroll(f, area, app.scroll_y, height, total, app.scroll_y + 1, end);
 }
 
 /// The style of selected text. Reverse video (used for differences) is dropped,
@@ -462,55 +441,102 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
+/// Footer key hints, the same in track, monitor and git-graph: movement, search,
+/// the tool's own keys, then `? help` and `q quit` last. When the line is too
+/// narrow, the tool's own keys are dropped from the end first, so help and quit
+/// always stay visible.
+fn footer_hints(keys: &[(&str, &str)], width: u16) -> Line<'static> {
+    let hint_width = |(k, v): &(&str, &str)| Line::raw(*k).width() + Line::raw(*v).width() + 3;
+    let mut keys = keys.to_vec();
+    while keys.len() > 2 && 1 + keys.iter().map(hint_width).sum::<usize>() > width as usize {
+        keys.remove(keys.len() - 3);
+    }
     let mut spans = vec![Span::raw(" ")];
     for (k, v) in keys {
         spans.push(Span::styled(k.to_string(), Style::new().fg(ACCENT)));
         spans.push(Span::styled(format!(" {v}  "), Style::new().fg(DIM)));
     }
-    spans
+    Line::from(spans)
+}
+
+/// A scrollbar on the right border of a panel and the visible range (`first`-`last`
+/// of `total`, 1-based) on its bottom border, the same in track, monitor and
+/// git-graph. Nothing is drawn when everything fits.
+fn draw_scroll(
+    f: &mut Frame,
+    panel: Rect,
+    offset: usize,
+    visible: usize,
+    total: usize,
+    first: usize,
+    last: usize,
+) {
+    if total <= visible || panel.height < 3 {
+        return;
+    }
+    let mut state = ScrollbarState::new(total - visible)
+        .position(offset)
+        .viewport_content_length(visible);
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::new().fg(ACCENT))
+            .track_style(Style::new().fg(DIM)),
+        panel.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut state,
+    );
+    let range = Line::styled(format!(" {first}-{last}/{total} "), Style::new().fg(DIM));
+    let bottom = Rect {
+        y: panel.bottom() - 1,
+        height: 1,
+        ..panel
+    };
+    f.render_widget(
+        range.right_aligned(),
+        bottom.inner(Margin {
+            vertical: 0,
+            horizontal: 1,
+        }),
+    );
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    let left = if let Some(msg) = &app.message {
+    let line = if let Some(msg) = &app.message {
         Line::styled(format!(" {msg}"), Style::new().fg(YELLOW))
     } else if app.time_machine() {
-        Line::from(key_hints(&[
-            ("J/K", "older/newer"),
-            ("</>", "oldest/newest"),
-            ("j/k", "scroll"),
-            ("/", "search"),
-            ("esc", "live"),
-            ("?", "help"),
-        ]))
+        footer_hints(
+            &[
+                ("j/k", "scroll"),
+                ("/", "search"),
+                ("n/N", "next/prev"),
+                ("J/K", "older/newer"),
+                ("</>", "oldest/newest"),
+                ("esc", "live"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            area.width,
+        )
     } else {
-        Line::from(key_hints(&[
-            ("space", "time machine"),
-            ("j/k", "scroll"),
-            ("/", "search"),
-            ("s", if app.suspended { "resume" } else { "suspend" }),
-            ("?", "help"),
-            ("q", "quit"),
-        ]))
-    };
-
-    let toggle = |name: &'static str, on: bool| {
-        Span::styled(
-            format!("{name} "),
-            Style::new().fg(if on { ACCENT } else { DIM }),
+        footer_hints(
+            &[
+                ("j/k", "scroll"),
+                ("/", "search"),
+                ("n/N", "next/prev"),
+                ("space", "time machine"),
+                ("s", if app.suspended { "resume" } else { "suspend" }),
+                ("d", "diff"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            area.width,
         )
     };
-    let mut right = vec![];
-    right.extend([
-        toggle("diff", app.diff),
-        toggle("bell", app.bell),
-        toggle("wrap", app.wrap),
-    ]);
-    let right = Line::from(right);
-    let rw = right.width() as u16;
-    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(rw)]).areas(area);
-    f.render_widget(left, l);
-    f.render_widget(right, r);
+    f.render_widget(line, area);
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
