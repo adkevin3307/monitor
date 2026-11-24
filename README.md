@@ -61,10 +61,10 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `gg` / `G` | scroll |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
-| `z` | zoom: the output fills the whole terminal |
-| `d` `b` `w` `t` `H` | toggle diff / bell / wrap / title / history panel |
+| `z` | show / hide the history panel |
+| `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
-The history panel lists results newest first. `●` marks results whose output
+The history panel (hidden by default, toggle with `z`) lists results newest first. `●` marks results whose output
 changed, and a red id means the command exited with a non-zero status. The
 bottom of the panel shows how much memory the kept results use.
 
