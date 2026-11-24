@@ -10,8 +10,15 @@ It runs a command over and over and shows its output full-screen, and adds:
 - **ANSI colors**: keeps the colors from the command's output.
 - **Scrolling and search**: vim-style keys, and `/` regex search (smart case) in a small input box that jumps to matches while you type; `n`/`N` step through them and `Esc` hides the highlights. See [Shared search](#shared-search).
 - **Suspend / refresh**: `s` pauses running the command, `r` refreshes (runs it right away).
-- **Precise mode** (`-p`): starts a run every interval, even if the previous one is still going.
+- **Precise mode** (`-p`): starts a run every interval, even if the previous one is still going (at most 16 runs at once; further ticks are skipped while 16 are running).
 - **watch-style exits**: `-e` exits on a non-zero status, `-g` exits when the output changes.
+- **Safe with any command**: output is kept up to 16 MiB per run (a command that writes more, like
+  `yes` or a `ping` without `-c`, is stopped there and the output says so), and commands run without
+  the terminal, so a password prompt fails at once instead of hanging, and `--shell-options -i` works.
+  Like track, only colors are kept from escape sequences, and a line redrawn with `\r` shows its
+  latest text.
+
+Unlike `watch`, `-w` turns wrapping *on*: monitor starts unwrapped, like track.
 
 ## Install
 
@@ -37,11 +44,11 @@ monitor -x -- git status --short       # run directly, no shell
 | `-b, --bell` | ring the bell when the output changes |
 | `-p, --precise` | run on a fixed schedule, even if the last run hasn't finished |
 | `-t, --no-title` | hide the title bar |
-| `-w, --unfold` | don't wrap lines (scroll horizontally instead) |
-| `--no-mouse` | don't capture the mouse: plain drag uses the terminal's own selection, but no wheel scrolling or clicking |
+| `-w, --wrap` | start with line wrapping on (off by default, like track; `w` toggles it) |
+| `--no-mouse` | don't capture the mouse: drag uses the terminal's own selection, and the wheel scrolls only where the terminal supports alternate scroll mode |
 | `-x, --exec` | run the command directly instead of through a shell |
 | `-s, --shell <SHELL>` | shell to use (default `sh`, env `MONITOR_SHELL`) |
-| `--shell-options <OPTS>` | extra shell options before `-c`, e.g. `"-i"` |
+| `--shell-options <OPTIONS>` | extra shell options before `-c`, e.g. `"-i"` |
 | `-e, --errexit` | exit when the command fails |
 | `-g, --chgexit` | exit when the output changes |
 | `-k, --keep-unchanged` | record every run, not only runs whose output or exit status changed |
@@ -64,17 +71,17 @@ same in track, monitor and git-graph (see the shared key guideline below).
 | `j`/`k`, `↓`/`↑` | Down / up |
 | `ctrl-d`/`ctrl-u` | Half page down / up |
 | `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | Page down / up |
-| `g` / `G` | Top / bottom |
+| `g`/`G` | Top / bottom |
 | `h`/`l`, `←`/`→` | Left / right 4 columns (when not wrapping) |
 | `H`/`L` | Left / right half a page (when not wrapping) |
-| `home` / `end` | Line start / end (when not wrapping) |
+| `home`/`end` | Line start / end (when not wrapping) |
 
 **Search**
 
 | Key | Action |
 |---|---|
 | `/` | Search (regex, smart case) |
-| `n` / `N` | Next / previous match |
+| `n`/`N` | Next / previous match |
 | `esc` | Hide search highlights, then back to the live view |
 
 **Time machine**
@@ -82,8 +89,8 @@ same in track, monitor and git-graph (see the shared key guideline below).
 | Key | Action |
 |---|---|
 | `space` | Toggle time machine |
-| `J` / `K` | Older / newer result |
-| `<` / `>` | Oldest / newest result |
+| `J`/`K` | Older / newer result |
+| `<`/`>` | Oldest / newest result |
 | `esc` | Back to the live view |
 
 **Input box** (the `/` box)
@@ -140,18 +147,18 @@ keys do the same thing in all three:
 | `j`/`k`, `↓`/`↑` | Down / up |
 | `ctrl-d`/`ctrl-u` | Half page down / up |
 | `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | Page down / up |
-| `g` / `G` | Top / bottom |
+| `g`/`G` | Top / bottom |
 | `h`/`l` | Left / right 4 columns |
 | `H`/`L` | Left / right half a page |
-| `home` / `end` | Line start / end (not top / bottom) |
-| `/`, `n` / `N` | Search (regex, smart case), next / previous match |
+| `home`/`end` | Line start / end (not top / bottom) |
+| `/`, `n`/`N` | Search (regex, smart case), next / previous match |
 | `esc` | Hide search highlights, then go back |
 | `w` | Toggle wrap (track, monitor) |
 | `r` | Refresh: redraw the screen, and run the command again (monitor) or reload the repository (git-graph) |
 | `?` | Help, in the same window everywhere (`j`/`k` or the wheel scroll it; any other key closes it) |
 | `q`, `ctrl-c` | Quit (in an input box, `ctrl-c` cancels it like `esc`) |
 | mouse wheel | Scroll (`ctrl` + wheel: faster) |
-| mouse drag | Select text and copy it with OSC 52 on release |
+| mouse drag | Select text and copy it with OSC 52 on release (up to 512 KB) |
 | shift + drag | The terminal's own selection |
 
 Other keys are specific to one tool, and no key just repeats another one.
@@ -170,19 +177,25 @@ HEAD.
 ```
 
 - Patterns are regular expressions with smart case (case-insensitive unless
-  the pattern has an uppercase letter); an invalid regex is matched literally.
-- While you type, matches are highlighted, the view jumps to the first match
+  the pattern has an uppercase letter; the letter of an escape such as `\W`
+  or `\S` doesn't count); an invalid regex is matched literally.
+- While you type, matches are highlighted, the view moves to the first match
   from where you started, and the box shows how many there are.
 - `enter` keeps the search; `esc` cancels it and goes back to where you were;
   an empty search clears it.
 - Editing: `←`/`→`, `home`/`end`, `ctrl-a`/`ctrl-e` move the cursor,
   `ctrl-u`/`ctrl-w` delete to the start / the previous word, `↑`/`↓` browse
   earlier searches, and `backspace` on an empty box closes it.
+- `n`/`N` move to the next / previous match. The current match's line is
+  highlighted (in `git-graph` it is the selected commit), and the view only
+  scrolls when the match is off screen, keeping 3 lines of context. Scroll
+  the current match out of view and `n`/`N` start from the screen instead.
 - The main panel's title shows the search and the current match, e.g.
   `/error  3/12`.
 - Matches are highlighted in black on yellow. `esc` hides the highlights but
-  keeps the search (the title then says `hidden`), like vim's `:noh`; `n` / `N`
+  keeps the search (the title then says `hidden`), like vim's `:noh`; `n`/`N`
   show them again and jump to the next / previous match.
+
 ## Shared screen layout
 
 All three draw the same frame:
@@ -196,8 +209,10 @@ All three draw the same frame:
  j/k down/up  g/G top/bottom  / search  n/N next/prev  tool keys…  esc back  ? help  q quit
 ```
 
-- The header starts with the tool's name on a cyan badge; flags appear only
-  while they are on (e.g. `wrap`, `diff · bell · wrap`).
+- The header starts with the tool's name on a cyan badge, then what it shows
+  (cut short with `…` when space runs out), its state, and the flags that
+  are on (e.g. `wrap`, `diff · bell · wrap`). The tool-specific info on the
+  right appears when everything fits.
 - Panels have rounded borders; the focused one is cyan.
 - A panel whose content doesn't fit has a scrollbar on its right border, in
   the border's color (cyan when the panel is focused). Nothing is drawn over
@@ -206,8 +221,14 @@ All three draw the same frame:
   tool's most used keys (`?` lists them all), `esc` back where it applies,
   then `? help` and `q quit`.
   Keys are cyan and their descriptions gray; on a narrow terminal the tool's
-  own keys are dropped first, so help and quit always stay visible. A status
-  message (yellow) replaces the hints until the next key.
+  own keys are dropped first, then `? help`, and a hint is never cut in
+  half. A status message (yellow) replaces the hints until the next key.
+- The mouse is captured, so the wheel scrolls and a drag selects text.
+  `--no-mouse` leaves it to the terminal and asks for alternate scroll mode,
+  so the wheel still scrolls where the terminal supports it.
+- However the tool ends (`q`, `ctrl-c`, a termination signal from outside
+  such as `kill` or closing the terminal or tmux pane, or a crash), the
+  terminal is restored: normal screen, cursor, keyboard and mouse.
 
 ## Memory
 
@@ -251,6 +272,9 @@ cargo test     # layout, diff, search, change summary and editor tests
 | `src/app.rs` | Application state: history, time machine, scrolling, search, selection |
 | `src/ui.rs` | Rendering with ratatui |
 | `src/cli.rs` | Command-line options |
+| `src/escapes.rs` | Removes escape sequences other than colors before parsing (shared with track) |
+| `src/terminal.rs` | Entering and restoring the terminal, panics, OSC 52 copying (shared) |
+| `src/signals.rs` | Quitting cleanly on termination signals (shared) |
 | `src/input.rs` | Search box line editor and history (shared) |
 | `src/matcher.rs` | Smart-case regex search patterns (shared) |
 | `src/main.rs` | Terminal setup and the event loop |
