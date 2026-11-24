@@ -8,8 +8,10 @@ mod ui;
 use std::time::Duration;
 
 use clap::Parser;
+use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{Clear, ClearType};
 
 use app::{App, ExitReason};
 use cli::Cli;
@@ -36,7 +38,7 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             if std::mem::take(&mut app.redraw) {
-                terminal.clear()?;
+                refresh_screen(&mut terminal)?;
             }
             terminal.draw(|f| ui::draw(f, &mut app, &hostname))?;
 
@@ -89,4 +91,14 @@ fn hostname() -> String {
     }
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     String::from_utf8_lossy(&buf[..end]).into_owned()
+}
+
+/// Redraws the whole screen (r: refresh), the same in track, monitor and git-graph.
+/// Unlike `Terminal::clear`, this doesn't ask the terminal for the cursor position
+/// (`\e[6n`), so a terminal that doesn't answer can't make it fail.
+fn refresh_screen(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    execute!(terminal.backend_mut(), Clear(ClearType::All))?;
+    // An empty frame first, so the next frame repaints every cell.
+    terminal.draw(|_| {})?;
+    Ok(())
 }

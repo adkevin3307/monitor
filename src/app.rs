@@ -528,6 +528,7 @@ impl App {
             KeyCode::Char('r') => {
                 self.runner.run_now();
                 self.redraw = true;
+                self.message = Some("Refreshed".into());
             }
             KeyCode::Char('d') => self.diff = !self.diff,
             KeyCode::Char('b') => {
