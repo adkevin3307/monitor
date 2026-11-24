@@ -44,6 +44,7 @@ pub fn draw(f: &mut Frame, app: &mut App, hostname: &str) {
         draw_header(f, app, header, hostname);
     }
     draw_output(f, app, output);
+    app.history_area = if hist_w > 0 { history } else { Rect::default() };
     if hist_w > 0 {
         draw_history(f, app, history);
     }
@@ -289,7 +290,8 @@ fn draw_help(f: &mut Frame) {
         ("j/k ↑/↓", "scroll"),
         ("ctrl-d/u", "half page down / up"),
         ("PgDn/PgUp, ctrl-f/b", "page down / up"),
-        ("gg / G", "top / bottom"),
+        ("g / G", "top / bottom"),
+        ("mouse wheel", "scroll; over the history, older / newer result"),
         ("h/l ←/→, 0", "scroll sideways (when not wrapping)"),
         ("d / b / w / t", "toggle diff / bell / wrap / title"),
         ("Search", ""),

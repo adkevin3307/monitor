@@ -6,7 +6,8 @@ mod ui;
 use std::time::Duration;
 
 use clap::Parser;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::crossterm::execute;
 
 use app::{App, ExitReason};
 use cli::Cli;
@@ -20,6 +21,10 @@ fn main() -> anyhow::Result<()> {
 
     let mut terminal = ratatui::try_init()
         .map_err(|e| anyhow::anyhow!("failed to initialize terminal (is stdout a TTY?): {e}"))?;
+    let mouse = !cli.no_mouse;
+    if mouse {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+    }
     let result = (|| -> anyhow::Result<()> {
         loop {
             while let Ok(msg) = rx.try_recv() {
@@ -32,8 +37,10 @@ fn main() -> anyhow::Result<()> {
 
             if event::poll(Duration::from_millis(100))? {
                 loop {
-                    if let Event::Key(key) = event::read()? {
-                        app.on_key(key);
+                    match event::read()? {
+                        Event::Key(key) => app.on_key(key),
+                        Event::Mouse(m) => app.on_mouse(m),
+                        _ => {}
                     }
                     if app.exit.is_some() || !event::poll(Duration::ZERO)? {
                         break;
@@ -42,6 +49,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
     })();
+    if mouse {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
     ratatui::restore();
     app.runner.kill_all();
     result?;

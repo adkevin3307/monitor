@@ -37,6 +37,7 @@ monitor -x -- git status --short       # run directly, no shell
 | `-p, --precise` | run on a fixed schedule, even if the last run hasn't finished |
 | `-t, --no-title` | hide the title bar |
 | `-w, --unfold` | don't wrap lines (scroll horizontally instead) |
+| `--no-mouse` | don't capture the mouse: keeps the terminal's own text selection, but no wheel scrolling |
 | `-x, --exec` | run the command directly instead of through a shell |
 | `-s, --shell <SHELL>` | shell to use (default `sh`, env `MONITOR_SHELL`) |
 | `--shell-options <OPTS>` | extra shell options before `-c`, e.g. `"-i"` |
@@ -60,7 +61,8 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `<` / `>` | oldest / newest result |
 | `Esc` | clear search, or go back to the live view |
 | `s` / `r` | suspend or resume / run now |
-| `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `gg` / `G` | scroll |
+| `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `g` / `G` | scroll; `g` / `G` jump to the top / bottom |
+| mouse wheel | scroll; over the history panel, older / newer result |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |

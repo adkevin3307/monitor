@@ -32,6 +32,10 @@ pub struct Cli {
     #[arg(short = 'w', long)]
     pub unfold: bool,
 
+    /// Don't capture the mouse (keeps the terminal's own text selection; no wheel scrolling)
+    #[arg(long)]
+    pub no_mouse: bool,
+
     /// Run the command directly instead of through a shell
     #[arg(short = 'x', long)]
     pub exec: bool,

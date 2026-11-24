@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ansi_to_tui::IntoText;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use unicode_width::UnicodeWidthChar;
@@ -13,6 +16,7 @@ use crate::cli::Cli;
 use crate::runner::{Msg, Runner, Snapshot};
 
 const TAB_WIDTH: usize = 8;
+const MOUSE_SCROLL_LINES: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitReason {
@@ -69,11 +73,12 @@ pub struct App {
     pub scroll_x: usize,
     pub view_height: usize,
     pub view_width: usize,
+    /// Where the history panel was drawn last frame (empty when hidden).
+    pub history_area: Rect,
 
     pub query: Option<String>,
     pub search_input: Option<String>,
     pub message: Option<String>,
-    pending_g: bool,
     pending_jump: bool,
 
     pub exit: Option<ExitReason>,
@@ -106,10 +111,10 @@ impl App {
             scroll_x: 0,
             view_height: 0,
             view_width: 0,
+            history_area: Rect::default(),
             query: None,
             search_input: None,
             message: None,
-            pending_g: false,
             pending_jump: false,
             exit: None,
             cache: None,
@@ -341,7 +346,6 @@ impl App {
         }
 
         self.message = None;
-        let was_g = std::mem::take(&mut self.pending_g);
         let half = (self.view_height / 2).max(1);
         let page = self.view_height.max(1);
 
@@ -397,9 +401,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.scroll_y = self.scroll_y.saturating_sub(1),
             KeyCode::PageDown => self.scroll_y += page,
             KeyCode::PageUp => self.scroll_y = self.scroll_y.saturating_sub(page),
-            KeyCode::Char('g') if was_g => self.scroll_y = 0,
-            KeyCode::Char('g') => self.pending_g = true,
-            KeyCode::Home => self.scroll_y = 0,
+            KeyCode::Char('g') | KeyCode::Home => self.scroll_y = 0,
             KeyCode::Char('G') | KeyCode::End => self.scroll_y = usize::MAX,
             KeyCode::Char('h') | KeyCode::Left => self.scroll_x = self.scroll_x.saturating_sub(4),
             KeyCode::Char('l') | KeyCode::Right => self.scroll_x += 4,
@@ -410,6 +412,24 @@ impl App {
             KeyCode::Char('n') => self.jump_match(true),
             KeyCode::Char('N') => self.jump_match(false),
             _ => {}
+        }
+        self.clamp_scroll();
+    }
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.show_help || self.search_input.is_some() {
+            return;
+        }
+        let over_history = self.history_area.contains(Position::new(mouse.column, mouse.row));
+        match mouse.kind {
+            // The history lists newest first, so scrolling down goes to older results.
+            MouseEventKind::ScrollDown if over_history => self.move_history(-1),
+            MouseEventKind::ScrollUp if over_history => self.move_history(1),
+            MouseEventKind::ScrollDown => self.scroll_y += MOUSE_SCROLL_LINES,
+            MouseEventKind::ScrollUp => self.scroll_y = self.scroll_y.saturating_sub(MOUSE_SCROLL_LINES),
+            MouseEventKind::ScrollRight => self.scroll_x += 4,
+            MouseEventKind::ScrollLeft => self.scroll_x = self.scroll_x.saturating_sub(4),
+            _ => return,
         }
         self.clamp_scroll();
     }
