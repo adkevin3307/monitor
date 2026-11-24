@@ -42,6 +42,7 @@ monitor -x -- git status --short       # run directly, no shell
 | `-e, --errexit` | exit when the command fails |
 | `-g, --chgexit` | exit when the output changes |
 | `--max-history <N>` | how many results to keep (default 1000) |
+| `--max-history-size <SIZE>` | memory limit for kept results, e.g. `64M`, `1G` (default `128M`) |
 
 Many programs turn off colors when their output isn't a terminal, so pass
 `--color=always` (or the equivalent) to keep them.
@@ -63,4 +64,13 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `d` `b` `w` `t` `H` | toggle diff / bell / wrap / title / history panel |
 
 The history panel lists results newest first. `●` marks results whose output
-changed, and a red id means the command exited with a non-zero status.
+changed, and a red id means the command exited with a non-zero status. The
+bottom of the panel shows how much memory the kept results use.
+
+## Memory
+
+Every result is kept for the time machine, up to two limits: `--max-history`
+results and `--max-history-size` bytes. When either is exceeded, the oldest
+results are dropped first. A result whose output matches the previous one
+shares its memory, so commands with output that rarely changes use almost no
+memory, even over very long runs.

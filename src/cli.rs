@@ -56,6 +56,11 @@ pub struct Cli {
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     pub max_history: u64,
 
+    /// Maximum memory used by stored results, e.g. `64M`, `1G`; oldest results are dropped first.
+    /// Unchanged results share memory with the previous one.
+    #[arg(long, default_value = "128M", value_parser = parse_size)]
+    pub max_history_size: usize,
+
     /// Command to run
     #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
@@ -68,6 +73,30 @@ fn parse_interval(s: &str) -> Result<Duration, String> {
         Err(_) => humantime::parse_duration(s).map_err(|e| e.to_string())?,
     };
     Ok(d.max(Duration::from_millis(10)))
+}
+
+fn parse_size(s: &str) -> Result<usize, String> {
+    let s = s.trim();
+    let split = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+    let (num, unit) = s.split_at(split);
+    let num: f64 = num.parse().map_err(|_| format!("invalid size `{s}`"))?;
+    let mult = match unit.trim().to_ascii_uppercase().trim_end_matches("IB").trim_end_matches('B') {
+        "" => 1u64,
+        "K" => 1 << 10,
+        "M" => 1 << 20,
+        "G" => 1 << 30,
+        _ => return Err(format!("invalid size unit in `{s}` (use K, M or G)")),
+    };
+    Ok((num * mult as f64) as usize)
+}
+
+pub fn format_bytes(n: usize) -> String {
+    match n {
+        n if n >= 1 << 30 => format!("{:.1}G", n as f64 / (1u64 << 30) as f64),
+        n if n >= 1 << 20 => format!("{:.1}M", n as f64 / (1u64 << 20) as f64),
+        n if n >= 1 << 10 => format!("{:.0}K", n as f64 / 1024.0),
+        n => format!("{n}B"),
+    }
 }
 
 impl Cli {
@@ -96,6 +125,10 @@ mod tests {
         assert_eq!(parse_interval("1m30s").unwrap(), Duration::from_secs(90));
         assert!(parse_interval("abc").is_err());
         assert_eq!(format_interval(Duration::from_millis(1500)), "1s 500ms");
+        assert_eq!(parse_size("128M").unwrap(), 128 << 20);
+        assert_eq!(parse_size("1.5GiB").unwrap(), 3 << 29);
+        assert_eq!(parse_size("4096").unwrap(), 4096);
+        assert!(parse_size("12X").is_err());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use ratatui::widgets::{
 };
 
 use crate::app::App;
-use crate::cli::format_interval;
+use crate::cli::{format_bytes, format_interval};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const ACCENT: Color = Color::Cyan;
@@ -184,7 +184,12 @@ fn draw_history(f: &mut Frame, app: &App, area: Rect) {
             Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(Color::DarkGray))
-                .title(Line::from(format!(" History ({n}) ")).bold()),
+                .title(Line::from(format!(" History ({n}) ")).bold())
+                .title_bottom(
+                    Line::from(format!(" {} ", format_bytes(app.history_bytes)))
+                        .dim()
+                        .alignment(Alignment::Right),
+                ),
         )
         .highlight_style(highlight);
     f.render_stateful_widget(list, area, &mut state);

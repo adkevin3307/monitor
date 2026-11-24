@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
 
 fn print_last(app: &App) {
     if let Some(s) = app.history.last() {
-        print!("{}", s.output);
+        print!("{}", &*s.output);
     }
 }
 

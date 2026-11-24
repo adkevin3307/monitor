@@ -17,7 +17,8 @@ pub struct Snapshot {
     pub id: usize,
     pub start: DateTime<Local>,
     pub duration: Duration,
-    pub output: String,
+    /// Shared with the previous snapshot when the output is identical.
+    pub output: Arc<str>,
     /// Exit code (128 + signal when killed); `None` when it failed to start.
     pub code: Option<i32>,
     /// Whether the output differs from the previous snapshot.
@@ -152,7 +153,7 @@ fn run_once(id: usize, spec: &Spec, children: &Mutex<HashSet<i32>>, tx: &Sender<
         id,
         start,
         duration: clock.elapsed(),
-        output,
+        output: output.into(),
         code,
         changed: false,
     }))

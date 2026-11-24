@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ansi_to_tui::IntoText;
@@ -44,6 +45,9 @@ pub struct App {
     pub interval: Duration,
     pub precise: bool,
     pub max_history: usize,
+    pub max_history_bytes: usize,
+    /// Bytes held by stored outputs (shared outputs counted once).
+    pub history_bytes: usize,
     pub errexit: bool,
     pub chgexit: bool,
 
@@ -83,6 +87,8 @@ impl App {
             interval: cli.interval,
             precise: cli.precise,
             max_history: cli.max_history as usize,
+            max_history_bytes: cli.max_history_size,
+            history_bytes: 0,
             errexit: cli.errexit,
             chgexit: cli.chgexit,
             history: Vec::new(),
@@ -135,11 +141,25 @@ impl App {
                 self.running.remove(&snap.id);
                 let pos = self.history.partition_point(|s| s.id < snap.id);
                 snap.changed = match pos.checked_sub(1) {
-                    Some(p) => self.history[p].output != snap.output,
+                    Some(p) => {
+                        let prev = &self.history[p].output;
+                        if **prev == *snap.output {
+                            // Unchanged: share the previous buffer instead of keeping a copy.
+                            snap.output = prev.clone();
+                            false
+                        } else {
+                            true
+                        }
+                    }
                     None => false,
                 };
                 if let Some(next) = self.history.get_mut(pos) {
-                    next.changed = next.output != snap.output;
+                    if *next.output == *snap.output {
+                        next.output = snap.output.clone();
+                        next.changed = false;
+                    } else {
+                        next.changed = true;
+                    }
                 }
                 let is_latest = pos == self.history.len();
                 let changed = snap.changed;
@@ -170,8 +190,31 @@ impl App {
         }
     }
 
+    /// Bytes owned by `history[i]`, i.e. not shared with the snapshot before it.
+    fn owned_bytes(&self, i: usize) -> usize {
+        let out = &self.history[i].output;
+        match i.checked_sub(1) {
+            Some(p) if Arc::ptr_eq(&self.history[p].output, out) => 0,
+            _ => out.len(),
+        }
+    }
+
+    /// Drops the oldest snapshots until both the count and the byte budget
+    /// are respected (the newest snapshot is always kept).
     fn trim_history(&mut self) {
-        let excess = self.history.len().saturating_sub(self.max_history);
+        let mut total: usize = (0..self.history.len()).map(|i| self.owned_bytes(i)).sum();
+        let mut excess = 0;
+        while self.history.len() - excess > 1
+            && (self.history.len() - excess > self.max_history || total > self.max_history_bytes)
+        {
+            let first = &self.history[excess].output;
+            let shared = self.history.get(excess + 1).is_some_and(|n| Arc::ptr_eq(&n.output, first));
+            if !shared {
+                total -= first.len();
+            }
+            excess += 1;
+        }
+        self.history_bytes = total;
         if excess == 0 {
             return;
         }
