@@ -108,6 +108,8 @@ pub struct App {
     /// Inner area of the output panel last frame.
     pub output_area: Rect,
     pub selection: Option<Selection>,
+    /// Text being selected in the history list: (list row, column after the marker).
+    pub history_selection: Option<Selection>,
     /// Snapshot (by id) held on screen while a selection is being made,
     /// so new output can't shift the text under the mouse.
     pinned: Option<usize>,
@@ -151,6 +153,7 @@ impl App {
             history_offset: 0,
             output_area: Rect::default(),
             selection: None,
+            history_selection: None,
             pinned: None,
             query: None,
             search_input: None,
@@ -329,6 +332,13 @@ impl App {
         self.cache.as_ref().map(|(_, r)| r)
     }
 
+    /// Text of history list row `row` (newest first), after the selection marker.
+    pub fn history_row_text(&self, row: usize) -> Option<String> {
+        let s = &self.history[self.history.len().checked_sub(row + 1)?];
+        let runs = if s.runs > 1 { format!(" ×{}", s.runs) } else { String::new() };
+        Some(format!("{}{runs}", s.start.format("%H:%M:%S")))
+    }
+
     /// Rows built by the last call to [`App::rows`].
     pub fn cached_rows(&self) -> Option<&Rows> {
         self.cache.as_ref().map(|(_, r)| r)
@@ -390,6 +400,7 @@ impl App {
             return;
         }
         self.selection = None;
+        self.history_selection = None;
         self.pinned = None;
 
         self.message = None;
@@ -497,15 +508,35 @@ impl App {
                 self.finish_selection();
                 return;
             }
+            // In the history, a click picks a result and a drag selects text.
+            MouseEventKind::Down(MouseButton::Left) if over_history => {
+                self.click_history(mouse.row);
+                self.message = None;
+                if let Some(at) = self.history_pos(mouse.column, mouse.row) {
+                    self.history_selection = Some(Selection { anchor: at, cursor: at, dragged: false });
+                }
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.history_selection.is_some() => {
+                let at = self.history_pos(mouse.column, mouse.row);
+                if let (Some(sel), Some(at)) = (self.history_selection.as_mut(), at) {
+                    sel.cursor = at;
+                    sel.dragged = true;
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.history_selection.is_some() => {
+                if let Some(sel) = self.history_selection.take().filter(|s| s.dragged) {
+                    let text = self.history_text(&sel);
+                    self.copy_text(&text);
+                }
+                return;
+            }
             // The history lists newest first, so scrolling down goes to older results.
             MouseEventKind::ScrollDown if over_history => self.move_history(-1),
             MouseEventKind::ScrollUp if over_history => self.move_history(1),
             MouseEventKind::ScrollDown => self.scroll_y += MOUSE_SCROLL_LINES,
             MouseEventKind::ScrollUp => self.scroll_y = self.scroll_y.saturating_sub(MOUSE_SCROLL_LINES),
-            MouseEventKind::Down(MouseButton::Left) if over_history => {
-                self.click_history(mouse.row);
-                return;
-            }
             MouseEventKind::ScrollRight => self.scroll_x += 4,
             MouseEventKind::ScrollLeft => self.scroll_x = self.scroll_x.saturating_sub(4),
             _ => return,
@@ -531,12 +562,42 @@ impl App {
         let Some(sel) = sel.filter(|s| s.dragged) else { return };
         let Some(rows) = self.cached_rows() else { return };
         let text = selected_text(rows, &sel);
+        self.copy_text(&text);
+    }
+
+    /// Copies `text` (if any) to the clipboard and says so in the footer.
+    fn copy_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        copy_to_clipboard(&text);
+        copy_to_clipboard(text);
         let n = text.chars().count();
         self.message = Some(format!("copied {n} character{} to the clipboard", if n == 1 { "" } else { "s" }));
+    }
+
+    /// The history text covered by `sel`, one list row per line.
+    pub fn history_text(&self, sel: &Selection) -> String {
+        let (start, end) = sel.range();
+        let lines: Vec<String> = (start.0..=end.0)
+            .filter_map(|r| {
+                let (from, to) = sel.columns(r)?;
+                Some(slice_columns(&self.history_row_text(r)?, from, to))
+            })
+            .collect();
+        lines.join("\n")
+    }
+
+    /// Maps a terminal cell to (row, column) in the history list text, clamped to
+    /// the list; the column skips the 2-cell selection marker.
+    fn history_pos(&self, x: u16, y: u16) -> Option<(usize, usize)> {
+        let inner = self.history_area.inner(Margin { vertical: 1, horizontal: 1 });
+        if inner.width == 0 || inner.height == 0 || self.history.is_empty() {
+            return None;
+        }
+        let x = x.clamp(inner.x, inner.right() - 1);
+        let y = y.clamp(inner.y, inner.bottom() - 1);
+        let row = (self.history_offset + (y - inner.y) as usize).min(self.history.len() - 1);
+        Some((row, ((x - inner.x) as usize).saturating_sub(2)))
     }
 
     /// Selects the history row at terminal row `y` (clicks on the border are ignored).
@@ -738,6 +799,20 @@ pub fn selected_text(rows: &Rows, sel: &Selection) -> String {
                 col += w;
             }
         }
+    }
+    out
+}
+
+/// The characters of `text` within display columns `[from, to)`.
+pub fn slice_columns(text: &str, from: usize, to: usize) -> String {
+    let mut out = String::new();
+    let mut col = 0;
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if col < to && col + w.max(1) > from {
+            out.push(c);
+        }
+        col += w;
     }
     out
 }

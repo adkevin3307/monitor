@@ -264,6 +264,25 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, area, &mut state);
     // Keep the scroll position so the list doesn't jump and clicks map to rows.
     app.history_offset = state.offset();
+
+    // Highlight selected text (columns start after the 2-cell "▶ " marker).
+    let Some(sel) = app.history_selection.filter(|s| s.dragged) else { return };
+    let inner = area.inner(Margin { vertical: 1, horizontal: 1 });
+    let buf = f.buffer_mut();
+    for y in inner.y..inner.bottom() {
+        let row = app.history_offset + (y - inner.y) as usize;
+        let (Some((from, to)), Some(text)) = (sel.columns(row), app.history_row_text(row)) else {
+            continue;
+        };
+        let to = to.min(Line::raw(text).width());
+        for col in from..to {
+            let x = inner.x + 2 + col as u16;
+            if x < inner.right() {
+                let cell = &mut buf[(x, y)];
+                cell.set_style(selected_style(cell.style()));
+            }
+        }
+    }
 }
 
 fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
