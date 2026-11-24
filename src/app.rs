@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use ansi_to_tui::IntoText;
 use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::{Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use unicode_width::UnicodeWidthChar;
@@ -75,6 +75,8 @@ pub struct App {
     pub view_width: usize,
     /// Where the history panel was drawn last frame (empty when hidden).
     pub history_area: Rect,
+    /// First visible row of the history list, kept between frames.
+    pub history_offset: usize,
 
     pub query: Option<String>,
     pub search_input: Option<String>,
@@ -112,6 +114,7 @@ impl App {
             view_height: 0,
             view_width: 0,
             history_area: Rect::default(),
+            history_offset: 0,
             query: None,
             search_input: None,
             message: None,
@@ -427,11 +430,28 @@ impl App {
             MouseEventKind::ScrollUp if over_history => self.move_history(1),
             MouseEventKind::ScrollDown => self.scroll_y += MOUSE_SCROLL_LINES,
             MouseEventKind::ScrollUp => self.scroll_y = self.scroll_y.saturating_sub(MOUSE_SCROLL_LINES),
+            MouseEventKind::Down(MouseButton::Left) if over_history => {
+                self.click_history(mouse.row);
+                return;
+            }
             MouseEventKind::ScrollRight => self.scroll_x += 4,
             MouseEventKind::ScrollLeft => self.scroll_x = self.scroll_x.saturating_sub(4),
             _ => return,
         }
         self.clamp_scroll();
+    }
+
+    /// Selects the history row at terminal row `y` (clicks on the border are ignored).
+    fn click_history(&mut self, y: u16) {
+        let inner = self.history_area.inner(Margin { vertical: 1, horizontal: 1 });
+        if y < inner.y || y >= inner.bottom() {
+            return;
+        }
+        // The list shows the newest result first.
+        let row = self.history_offset + (y - inner.y) as usize;
+        if let Some(idx) = self.history.len().checked_sub(row + 1) {
+            self.selected = Some(idx);
+        }
     }
 
     /// `delta` > 0 moves to newer snapshots, < 0 to older ones.

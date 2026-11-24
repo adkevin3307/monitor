@@ -179,7 +179,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn draw_history(f: &mut Frame, app: &App, area: Rect) {
+fn draw_history(f: &mut Frame, app: &mut App, area: Rect) {
     let n = app.history.len();
     let items: Vec<ListItem> = app
         .history
@@ -207,9 +207,12 @@ fn draw_history(f: &mut Frame, app: &App, area: Rect) {
         .block(block)
         .highlight_style(Style::new().bg(SELECTED_BG))
         .highlight_symbol("▶ ");
-    let mut state =
-        ListState::default().with_selected(app.current_index().map(|cur| n - 1 - cur));
+    let mut state = ListState::default()
+        .with_selected(app.current_index().map(|cur| n - 1 - cur))
+        .with_offset(app.history_offset);
     f.render_stateful_widget(list, area, &mut state);
+    // Keep the scroll position so the list doesn't jump and clicks map to rows.
+    app.history_offset = state.offset();
 }
 
 fn key_hints(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
@@ -292,6 +295,7 @@ fn draw_help(f: &mut Frame) {
         ("PgDn/PgUp, ctrl-f/b", "page down / up"),
         ("g / G", "top / bottom"),
         ("mouse wheel", "scroll; over the history, older / newer result"),
+        ("click", "select a result in the history"),
         ("h/l ←/→, 0", "scroll sideways (when not wrapping)"),
         ("d / b / w / t", "toggle diff / bell / wrap / title"),
         ("Search", ""),

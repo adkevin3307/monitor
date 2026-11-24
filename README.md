@@ -63,6 +63,7 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `s` / `r` | suspend or resume / run now |
 | `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `g` / `G` | scroll; `g` / `G` jump to the top / bottom |
 | mouse wheel | scroll; over the history panel, older / newer result |
+| mouse click | select a result in the history panel |
 | `h` `l` `←` `→`, `0` | scroll horizontally (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
