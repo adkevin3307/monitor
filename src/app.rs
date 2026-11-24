@@ -505,8 +505,10 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left => self.scroll_x = self.scroll_x.saturating_sub(4),
             KeyCode::Char('l') | KeyCode::Right => self.scroll_x += 4,
             // Line start / end (clamp_scroll stops at the end of the widest line)
-            KeyCode::Char('0') | KeyCode::Home => self.scroll_x = 0,
-            KeyCode::Char('$') | KeyCode::End => self.scroll_x = usize::MAX,
+            KeyCode::Char('H') => self.scroll_x = self.scroll_x.saturating_sub((self.view_width / 2).max(1)),
+            KeyCode::Char('L') => self.scroll_x += (self.view_width / 2).max(1),
+            KeyCode::Home => self.scroll_x = 0,
+            KeyCode::End => self.scroll_x = usize::MAX,
 
             // search
             KeyCode::Char('/') => self.search_input = Some(String::new()),

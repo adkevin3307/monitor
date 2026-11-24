@@ -61,13 +61,15 @@ Many programs turn off colors when their output isn't a terminal, so pass
 | `<` / `>` | oldest / newest result |
 | `Esc` | clear search, or go back to the live view |
 | `s` / `r` | suspend or resume / run now |
-| `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `g` / `G` | scroll; `g` / `G` jump to the top / bottom |
+| `j` `k` `↑` `↓`, `Ctrl-D/U`, `PgDn/PgUp`, `Ctrl-F/B` | scroll a line / half a page / a page |
+| `g` / `G` | top / bottom |
 | mouse wheel | scroll; over the history panel, older / newer result |
 | mouse click | select a result in the history panel |
-| mouse drag | select output text; it's copied to the clipboard when you release |
+| mouse drag | select text in the output or the history; it's copied to the clipboard when you release |
 | shift + drag | your terminal's own text selection |
-| `h` `l` `←` `→` | scroll horizontally (when lines aren't wrapped) |
-| `0` / `$`, `Home` / `End` | line start / end (when lines aren't wrapped) |
+| `h` `l` `←` `→` | scroll sideways 4 columns (when lines aren't wrapped) |
+| `H` / `L` | scroll sideways half a page |
+| `Home` / `End` | line start / end (when lines aren't wrapped) |
 | `/`, `n` / `N` | search, next / previous match |
 | `d` `b` `w` `t` | toggle diff / bell / wrap / title |
 
@@ -75,6 +77,39 @@ While in time-machine mode, a history panel lists results newest first, by the
 time each one started. `×N` shows how many unchanged runs a result covers, and a
 red time means the command exited with a non-zero status. The bottom of the
 panel shows how much memory the kept results use.
+
+The output title says where the shown result differs from the one before it,
+e.g. `changed: line 28` or `changed: 3 lines from line 12`. A new result is
+only kept when the output (or exit status) changed, but the change can be
+scrolled out of view, such as a `Restarting (1) 44 seconds ago` counter in
+`docker ps -a`; the title tells you where to look. Turn on `d` to highlight
+the changed characters.
+
+## Shared key guideline
+
+`track`, `monitor` and `git-graph` follow one key guideline, so the same
+keys do the same thing in all three:
+
+| Key | Meaning |
+|---|---|
+| `j`/`k`, `↓`/`↑` | One line down / up |
+| `ctrl-d`/`ctrl-u` | Half a page down / up |
+| `PgDn`/`PgUp`, `ctrl-f`/`ctrl-b` | A full page down / up |
+| `g` / `G` | Top / bottom |
+| `h`/`l` | Sideways 4 columns |
+| `H`/`L` | Sideways half a page |
+| `home` / `end` | Line start / end (not top / bottom) |
+| `/`, `n` / `N` | Search, next / previous match |
+| `esc` | Clear the search, or go back |
+| `?` | Help (any key closes it; `j`/`k` scroll it when it doesn't fit) |
+| `q`, `ctrl-c` | Quit |
+| mouse wheel | Scroll |
+| mouse drag | Select text and copy it with OSC 52 on release |
+| shift + drag | The terminal's own selection |
+
+Other keys are specific to one tool. Where a view doesn't scroll sideways,
+`h`/`l`/`H`/`L` may do something else there (in `git-graph`'s commit list
+they move between panes and jump to HEAD).
 
 ## Memory
 
@@ -97,6 +132,9 @@ button, the text is copied to the system clipboard with OSC 52, and wrapped
 lines are joined back into one line. Windows Terminal, iTerm2, kitty,
 WezTerm, Alacritty and foot support OSC 52. Inside tmux, run
 `tmux set -s set-clipboard on`.
+
+In time machine, you can also drag over the history list to copy result
+times; a plain click there picks a result.
 
 Shift + drag (Option + drag in iTerm2) still gives your terminal's own
 selection.
