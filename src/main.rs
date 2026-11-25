@@ -12,11 +12,8 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use clap::Parser;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event};
-use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{Clear, ClearType};
-use ratatui::{DefaultTerminal, Terminal};
 
 use app::{App, ExitReason};
 use cli::Cli;
@@ -44,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     };
     // External termination signals end through the cleanup below, too.
     let signals = Signals::catch(app.runner.killer())?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut terminal = terminal::tui(io::stdout())?;
     let result = (|| -> anyhow::Result<Option<i32>> {
         loop {
             if let Some(sig) = signals.received() {
@@ -116,8 +113,9 @@ fn hostname() -> String {
 /// Redraws the whole screen (r: refresh), the same in track, monitor and git-graph.
 /// Unlike `Terminal::clear`, this doesn't ask the terminal for the cursor position
 /// (`\e[6n`), so a terminal that doesn't answer can't make it fail.
-fn refresh_screen(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    execute!(terminal.backend_mut(), Clear(ClearType::All))?;
+fn refresh_screen(terminal: &mut terminal::Tui<io::Stdout>) -> std::io::Result<()> {
+    // Through the backend, so it also forgets what the screen showed
+    Backend::clear(terminal.backend_mut())?;
     // An empty frame first, so the next frame repaints every cell.
     terminal.draw(|_| {})?;
     Ok(())
